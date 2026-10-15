@@ -1,0 +1,49 @@
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "maze-crypto"
+version = "0.3.0"
+description = "Read-only crypto market, portfolio and DCA tracker for Maze Linux"
+readme = "README.md"
+requires-python = ">=3.12"
+license = "GPL-3.0-or-later"
+authors = [{ name = "Berk Küçük", email = "dev.berkkucukk@gmail.com" }]
+# Exact pins: these are the versions maze-crypto is tested against. On Maze
+# Linux the same libraries come from the Arch repository via maze-python.
+dependencies = [
+    "PyQt6==6.11.0",
+    "pyqtgraph==0.14.0",
+    "qasync==0.28.0",
+    "httpx==0.28.1",
+    "socksio==1.0.0",
+    "numpy==2.5.4",
+    "cryptography==50.0.2",
+    "qtawesome==1.4.2",
+]
+
+[project.optional-dependencies]
+dev = ["pytest==9.1.1", "pytest-asyncio==1.4.0", "ruff"]
+
+[project.scripts]
+maze-crypto = "mazecrypto.__main__:main"
+
+[tool.setuptools.packages.find]
+include = ["mazecrypto*"]
+
+[tool.setuptools.package-data]
+mazecrypto = ["i18n/*.json", "assets/*.svg", "assets/icons/*.png"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+asyncio_mode = "auto"
+filterwarnings = ["ignore::DeprecationWarning:qasync"]

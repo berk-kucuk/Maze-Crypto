@@ -1,0 +1,61 @@
+# Maintainer: Berk Küçük <dev.berkkucukk@gmail.com>
+
+pkgname=maze-crypto
+pkgver=0.3.0
+pkgrel=1
+pkgdesc="Read-only crypto market, portfolio and DCA tracker for Maze Linux"
+arch=('any')
+url="https://mazelinux.berkkucukk.com.tr"
+license=('GPL-3.0-or-later')
+# PyQt6, qasync, httpx, numpy and cryptography come from maze-python, the
+# shared Maze venv at /opt/maze/venv (created with --system-site-packages).
+# The two libraries below are plain Arch packages the venv sees as well.
+depends=(
+    'maze-python'
+    'python-pyqtgraph'      # charts
+    'python-socksio'        # SOCKS5 / Tor support in httpx
+    'python-qtawesome'      # interface icons (also pulled in by maze-python)
+    'hicolor-icon-theme'
+)
+makedepends=('python')
+optdepends=(
+    'inter-font: the interface typeface of the Maze apps'
+    'ollama: local AI answers on the home page (or install maze-ai)'
+    'tor: route every request through Tor (Settings → Network)'
+)
+# LOCAL BUILD: the source tarball is generated from the working tree by
+# ../build-pkg.sh (NOT fetched from a remote).
+source=("$pkgname-$pkgver.tar.gz" "maze-crypto.desktop")
+sha256sums=('SKIP' 'SKIP')
+
+package() {
+    cd "Maze-Crypto-$pkgver"
+
+    install -dm755 "$pkgdir/usr/share/maze-crypto"
+    cp -r mazecrypto "$pkgdir/usr/share/maze-crypto/"
+    find "$pkgdir/usr/share/maze-crypto" -type d -name __pycache__ -prune -exec rm -rf {} +
+    find "$pkgdir/usr/share/maze-crypto" -type f -exec chmod 644 {} +
+    find "$pkgdir/usr/share/maze-crypto" -type d -exec chmod 755 {} +
+    # Byte-compile at build time: users cannot write __pycache__ under /usr, so
+    # without this every start would recompile. maze-python pins the Python
+    # minor version, so these stay valid until maze-python itself is rebuilt.
+    python -m compileall -q -o 0 -o 1 -s "$pkgdir" -p / "$pkgdir/usr/share/maze-crypto"
+
+    install -dm755 "$pkgdir/usr/bin"
+    cat > "$pkgdir/usr/bin/maze-crypto" << 'LAUNCH'
+#!/bin/bash
+export PYTHONPATH="/usr/share/maze-crypto${PYTHONPATH:+:$PYTHONPATH}"
+exec /opt/maze/venv/bin/python3 -m mazecrypto "$@"
+LAUNCH
+    chmod 755 "$pkgdir/usr/bin/maze-crypto"
+
+    install -Dm644 "$srcdir/maze-crypto.desktop" "$pkgdir/usr/share/applications/maze-crypto.desktop"
+    for size in 32 48 64 128 256 512; do
+        install -Dm644 "mazecrypto/assets/icons/maze-crypto-$size.png" \
+            "$pkgdir/usr/share/icons/hicolor/${size}x${size}/apps/maze-crypto.png"
+    done
+    install -Dm644 mazecrypto/assets/icons/maze-crypto-256.png "$pkgdir/usr/share/pixmaps/maze-crypto.png"
+    install -Dm644 mazecrypto/assets/maze-crypto.svg "$pkgdir/usr/share/icons/hicolor/scalable/apps/maze-crypto.svg"
+    install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+    install -Dm644 README.md "$pkgdir/usr/share/doc/$pkgname/README.md"
+}

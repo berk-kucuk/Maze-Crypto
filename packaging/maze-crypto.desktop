@@ -1,0 +1,13 @@
+[Desktop Entry]
+Name=Maze Crypto
+GenericName=Crypto Tracker
+Comment=Read-only crypto market, portfolio and DCA tracker
+Comment[tr]=Salt okunur kripto piyasa, portföy ve DCA takibi
+Exec=maze-crypto
+Icon=maze-crypto
+Terminal=false
+Type=Application
+Categories=Office;Finance;
+Keywords=crypto;bitcoin;portfolio;dca;chart;price;tracker;kripto;portföy;
+StartupNotify=true
+StartupWMClass=maze-crypto
