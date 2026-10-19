@@ -25,14 +25,16 @@ class Position:
     realized_usd: float | None = 0.0
     fees_fiat: float = 0.0
     trades: int = 0
+    cost_known: bool = True         # False: held in a wallet without recorded buys — unknown, not zero
+    source: str = "trades"          # "trades" or "wallet" (amount from the user's addresses)
 
     @property
     def avg_cost_fiat(self) -> float | None:
-        return self.cost_fiat / self.amount if self.amount > EPS else None
+        return self.cost_fiat / self.amount if self.cost_known and self.amount > EPS else None
 
     @property
     def avg_cost_usd(self) -> float | None:
-        if self.cost_usd is None or self.amount <= EPS:
+        if not self.cost_known or self.cost_usd is None or self.amount <= EPS:
             return None
         return self.cost_usd / self.amount
 
@@ -101,7 +103,7 @@ class Holding:
     @property
     def pnl_fiat(self) -> float | None:
         v = self.value_fiat
-        return None if v is None else v - self.position.cost_fiat
+        return None if v is None or not self.position.cost_known else v - self.position.cost_fiat
 
     @property
     def pnl_usd(self) -> float | None:
@@ -131,10 +133,13 @@ class Summary:
     cost_usd: float | None
     realized_fiat: float
     weights: dict[str, float] = field(default_factory=dict)   # coin_id -> percent of value
+    known_value_fiat: float | None = None    # value of holdings with a known cost basis (None = all)
+    unknown_cost: list[str] = field(default_factory=list)     # symbols held without recorded buys
 
     @property
     def pnl_fiat(self) -> float:
-        return self.value_fiat - self.cost_fiat
+        known = self.value_fiat if self.known_value_fiat is None else self.known_value_fiat
+        return known - self.cost_fiat
 
     @property
     def pnl_pct(self) -> float | None:
@@ -152,7 +157,8 @@ def summarize(positions: Mapping[str, Position], prices_fiat: Mapping[str, float
     holdings = [Holding(p, prices_fiat.get(cid), prices_usd.get(cid))
                 for cid, p in positions.items() if p.amount > EPS]
     value = sum(h.value_fiat or 0.0 for h in holdings)
-    cost = sum(h.position.cost_fiat for h in holdings)
+    cost = sum(h.position.cost_fiat for h in holdings if h.position.cost_known)
+    known_value = sum(h.value_fiat or 0.0 for h in holdings if h.position.cost_known)
     usd_vals = [h.value_usd for h in holdings]
     usd_costs = [h.position.cost_usd for h in holdings]
     value_usd = None if any(v is None for v in usd_vals) else sum(usd_vals)  # type: ignore[arg-type]
@@ -160,7 +166,8 @@ def summarize(positions: Mapping[str, Position], prices_fiat: Mapping[str, float
     weights = {h.position.coin_id: (h.value_fiat or 0.0) / value * 100.0 for h in holdings} if value > 0 else {}
     holdings.sort(key=lambda h: h.value_fiat or 0.0, reverse=True)
     return Summary(holdings, value, cost, value_usd, cost_usd,
-                   sum(p.realized_fiat for p in positions.values()), weights)
+                   sum(p.realized_fiat for p in positions.values()), weights,
+                   known_value, [h.position.symbol for h in holdings if not h.position.cost_known])
 
 
 # ── target allocation ──────────────────────────────────────────────────────

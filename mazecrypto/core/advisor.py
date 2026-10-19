@@ -51,6 +51,7 @@ class AdvisorInput:
     watchlist: Sequence[str] = ()                      # coin ids
     summary: Summary | None = None
     trades: int = 0
+    wallets: int = 0          # watched addresses: a portfolio built from wallets needs no trades to be "started"
     trades_without_rate: int = 0
     targets: dict[str, float] = field(default_factory=dict)
     names: dict[str, str] = field(default_factory=dict)     # coin_id/bucket -> label
@@ -96,16 +97,17 @@ def tips(x: AdvisorInput, f: Formatter | None = None) -> list[Tip]:
     if not x.watchlist:
         out.append(Tip("start.watch", "action", "tip.start_watch.t", "tip.start_watch.b", action="watchlist",
                        action_label="tip.btn.add_coin", priority=10))
-    if x.trades == 0:
+    holding = bool(x.trades or x.wallets)
+    if x.trades == 0 and x.wallets == 0:
         out.append(Tip("start.trades", "action", "tip.start_trades.t", "tip.start_trades.b", action="holdings:add",
                        action_label="tip.btn.add_trade", priority=12))
     elif not x.targets:
         out.append(Tip("start.targets", "info", "tip.start_targets.t", "tip.start_targets.b",
                        action="holdings:targets", action_label="tip.btn.set_targets", priority=30))
-    if x.trades and not x.plan_exists:
+    if holding and not x.plan_exists:
         out.append(Tip("start.plan", "info", "tip.start_plan.t", "tip.start_plan.b", action="dca",
                        action_label="tip.btn.make_plan", priority=60))
-    if x.trades and not x.rules:
+    if holding and not x.rules:
         out.append(Tip("start.rules", "info", "tip.start_rules.t", "tip.start_rules.b", action="rules",
                        action_label="tip.btn.add_alert", priority=65))
 

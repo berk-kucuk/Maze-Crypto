@@ -26,6 +26,7 @@ from mazecrypto.ui.theme import P
 from mazecrypto.ui.widgets import button, label, repolish
 
 _ICON = Path(__file__).resolve().parent.parent / "assets" / "icons" / "maze-crypto-64.png"
+WINDOW_RADIUS = 14
 
 # (group heading, [(page key, label key, icon, expert only)])
 NAV = (
@@ -67,10 +68,13 @@ class MainWindow(QMainWindow):
         self.ctl = ctl
         self.setWindowTitle(APP_NAME)
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Window)
+        # Transparent outside the rounded background, so the corners are really round.
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setObjectName("MainWin")
         self.setMinimumSize(1100, 700)
         self.resize(1360, 880)
 
-        self.bg = Aurora()
+        self.bg = Aurora(corner_radius=WINDOW_RADIUS)
         self.setCentralWidget(self.bg)
         root = QHBoxLayout(self.bg)
         root.setContentsMargins(12, 12, 6, 6)

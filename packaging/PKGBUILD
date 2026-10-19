@@ -1,7 +1,7 @@
 # Maintainer: Berk Küçük <dev.berkkucukk@gmail.com>
 
 pkgname=maze-crypto
-pkgver=0.3.0
+pkgver=0.4.1
 pkgrel=1
 pkgdesc="Read-only crypto market, portfolio and DCA tracker for Maze Linux"
 arch=('any')

@@ -16,9 +16,10 @@
 
 ![Home](docs/screenshots/home.png)
 
-Maze Crypto shows live prices from the exchanges you actually use, values the
-purchases you enter by hand, keeps you on your own buying plan, and explains
-what the numbers mean in plain words. It **never trades**: it has no place for
+Maze Crypto shows live prices from the exchanges you actually use, reads the
+balances of the wallet addresses you watch, values the purchases you enter by
+hand, keeps you on your own buying plan, and explains what the numbers mean in
+plain words. It **never trades**: it has no place for
 exchange API keys, private keys or seed phrases, and never asks for them.
 
 > **Not investment advice.** Maze Crypto is an information tool. Nothing it
@@ -64,6 +65,17 @@ model is instructed not to give buy/sell recommendations or price forecasts.
   average cost and profit/loss (also in USD at each trade's rate), target vs.
   actual allocation with the amount needed to rebalance, and a calculator that
   splits new money toward your targets
+- **Wallets** (Portfolio → Wallets) — watch any number of public addresses per
+  coin. Bitcoin, Litecoin, Ethereum (+ Base, Arbitrum, Optimism, Polygon),
+  Hyperliquid (spot, perp margin, staked HYPE and HyperEVM), Solana and TRON are
+  read from the blockchain — balances, known tokens (USDT, USDC, …) and recent
+  transfers; Monero and anything else take a balance you enter. Wallet amounts
+  become the portfolio's amounts; recorded trades still give the average cost
+  and profit/loss. Each chain has several public providers, tried in turn until
+  one answers. Only public addresses: recovery phrases, private keys and xprv
+  are recognised and refused (and wiped from the clipboard), every address is
+  checksum-verified, and airdropped spam and zero-value "poisoning" transfers
+  are left out
 - **Buying plan (DCA)** — weekly, two-weekly or monthly; a fixed split or one
   that follows your targets; one-off extras; a "this period" card and a
   schedule with check-offs that can record the purchases for you
@@ -78,7 +90,8 @@ model is instructed not to give buy/sell recommendations or price forecasts.
 - **English and Turkish** interface, English by default
 - **Maze look** — OLED black, glass cards, Inter and one accent colour —
   champagne by default; monochrome white, gold or violet in Settings → Experience.
-  Green and red only ever mean up and down
+  Green and red only ever mean up and down. A frameless window with rounded
+  corners (square while maximised; needs a compositor, as KDE Plasma has)
 
 | Chart | Portfolio |
 | --- | --- |
@@ -95,6 +108,10 @@ All public endpoints, no keys or accounts:
 | Exchange prices and candles | Binance, Kraken, Coinbase, BtcTurk, Paribu — you pick which and in what order |
 | Market data (ATH, supply, market cap, 7d/30d change), search | CoinGecko |
 | Exchange rates | TCMB (TRY), ECB (other majors), CoinGecko USDT as a last resort |
+| Bitcoin / Litecoin wallets | Blockstream, then mempool.space; litecoinspace |
+| Ethereum and EVM wallets | Blockscout (Ethereum: balances, tokens, history), then public nodes — publicnode, 1rpc, drpc and each network's own RPC |
+| Solana wallets | Solana RPC, then publicnode; Jupiter for token names and prices |
+| TRON / Hyperliquid wallets | TronGrid; Hyperliquid's info API and HyperEVM RPC |
 
 **Fallbacks.** A fiat price comes from the first of your exchanges that lists
 the pair, otherwise USD price × exchange rate. An exchange price that disagrees
@@ -102,7 +119,9 @@ with CoinGecko by more than 25 % is ignored (usually two tokens sharing a
 ticker, or a delisted pair with a frozen price). Every response is cached in
 SQLite; if a source fails, the last good value is shown and the title bar says
 **STALE** or **OFFLINE** with its age. On start the window paints from the cache
-immediately and refreshes in the background.
+immediately and refreshes in the background. Wallet lookups try each provider
+of a chain in turn until one answers; a node that reports the wrong chain is
+skipped, and when none answers the wallet keeps its last balance, marked stale.
 
 ## Privacy
 
@@ -112,8 +131,12 @@ immediately and refreshes in the background.
 - **Tor / SOCKS5:** Settings → Network routes every request through a proxy.
   Use `socks5h://127.0.0.1:9050` so DNS goes through Tor as well; *Test* checks
   it before you save.
-- Trades and settings stay on your disk:
+- Trades, watched addresses and settings stay on your disk:
   `~/.config/maze-crypto/config.toml` and `~/.local/share/maze-crypto/profiles/`.
+- **Wallets:** only public addresses. Recovery phrases, private keys and xprv
+  are recognised, refused and wiped from the clipboard. Reading a balance sends
+  the address to that chain's public explorer, which can link it to your IP —
+  use the proxy to keep it out.
 
 ## Install
 
@@ -185,7 +208,8 @@ symbol = "BTC"
 name = "Bitcoin"
 ```
 
-Trades, targets, rules and the DCA plan live in the profile database, not here.
+Trades, watched wallets, targets, rules and the DCA plan live in the profile
+database, not here.
 
 ## Keyboard
 
@@ -218,8 +242,9 @@ python -m venv --system-site-packages .venv
 ruff check .
 ```
 
-`mazecrypto/core` (models, indicators, portfolio, DCA, rules, storage) and
-`mazecrypto/providers` (HTTP, exchanges, CoinGecko, FX) have no Qt dependency
+`mazecrypto/core` (models, indicators, portfolio, DCA, rules, storage, address
+validation, wallets) and `mazecrypto/providers` (HTTP, exchanges, CoinGecko, FX,
+wallet explorers) have no Qt dependency
 and are fully unit-tested; providers are tested against a fake network.
 `MAZE_CRYPTO_DEBUG=1` logs refresh timings to stderr. `MAZE_CRYPTO_HOME=<dir>`
 keeps config, data and cache under `<dir>` instead of your home directory.
@@ -229,6 +254,12 @@ implementing `ExchangeProvider`.
 Screenshots in this file are generated with
 `MAZE_CRYPTO_SCREENSHOT=out.png MAZE_CRYPTO_PAGE=chart maze-crypto`. The icon
 is `mazecrypto/assets/maze-crypto.svg`; `tools/make_icons.py` renders the PNGs.
+
+## Android
+
+[Maze Crypto for Android](https://github.com/berk-kucuk/Maze-Crypto-Mobile) is the
+same app on the phone — the same sources, wallets and arithmetic — with
+home-screen widgets.
 
 ## License
 

@@ -81,6 +81,13 @@ def date(ts: float) -> str:
     return datetime.fromtimestamp(ts).strftime("%d.%m.%Y" if i18n.language() == "tr" else "%Y-%m-%d")
 
 
+def clock(ts: float) -> str:
+    """Local time of day, 24-hour."""
+    import datetime as _dt
+
+    return _dt.datetime.fromtimestamp(ts).strftime("%H:%M")
+
+
 def age(seconds: float) -> str:
     s = int(seconds)
     if s < 90:

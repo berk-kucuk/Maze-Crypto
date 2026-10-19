@@ -117,6 +117,7 @@ QWidget {{
 }}
 /* after the QWidget rule: equal specificity, so order decides */
 QMainWindow, QDialog, QMessageBox, QInputDialog, QFileDialog {{ background-color: {P['base']}; }}
+QMainWindow#MainWin {{ background: transparent; }}
 
 /* ── chrome ───────────────────────────────────────────── */
 #AppName {{ font-size: 12pt; font-weight: 700; letter-spacing: 0.3px; }}

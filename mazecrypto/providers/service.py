@@ -29,6 +29,8 @@ from mazecrypto.providers import fx
 from mazecrypto.providers.exchanges import EXCHANGES, USD_QUOTES, ExchangeProvider, NotSupported, Pair
 from mazecrypto.providers.http import Http, NetError
 from mazecrypto.providers.market import coingecko
+from mazecrypto.providers.wallets import HOSTS as WALLET_HOSTS
+from mazecrypto.providers.wallets import WalletService
 
 SANITY = 0.25
 TTL_FX = 3600
@@ -47,7 +49,7 @@ def _plausible(candles: list[Candle], reference: float | None) -> bool:
 
 
 def allowed_hosts() -> dict[str, float]:
-    hosts = dict(coingecko.HOSTS) | dict(fx.HOSTS)
+    hosts = dict(coingecko.HOSTS) | dict(fx.HOSTS) | dict(WALLET_HOSTS)
     for cls in EXCHANGES.values():
         hosts |= cls.hosts
     return hosts
@@ -97,6 +99,8 @@ class MarketService:
         self.tickers: dict[str, dict[Pair, float]] = {}
         self.fx: dict[str, float] = {"USD": 1.0}
         self._no_pair: set[str] = set()
+        # Wallet lookups share the same HTTP layer: allow-list, proxy and per-host spacing.
+        self.wallets = WalletService(self.http, cache)
 
     async def close(self) -> None:
         await self.http.close()

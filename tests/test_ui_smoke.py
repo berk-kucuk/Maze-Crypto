@@ -95,6 +95,32 @@ def test_pages_and_dialogs(app, tmp_path, monkeypatch):
             sell.cost.setText("1")
             assert not sell.validate()                      # more than held
 
+            # Wallets: a recovery phrase is refused and wiped; a Monero balance entered by hand counts.
+            from mazecrypto.ui.dialogs.wallet_detail import WalletDetailDialog
+            from mazecrypto.ui.dialogs.wallet_editor import WalletDialog
+
+            wd = WalletDialog(ctl)
+            wd.addr.setText("abandon " * 11 + "about")
+            assert wd.secret == "seed" and wd.addr.text() == ""
+            wd.addr.setText("andon about")                  # the rest of a typed phrase is dropped too
+            assert wd.addr.text() == ""
+            assert not wd.validate() and not ctl.wallets()
+            xmr = "888tNkZrPN6JsEgekjMnABU4TBzc2Dt29EPAvkRxbANsAnjyPbb3iQ1YBRk1UXcdRsiKc9dhwMVgN5S9cQUiyoogDavup3H"
+            wd.addr.setText(xmr)                             # a Monero address switches to the manual form
+            assert wd.mode.current() == "manual"
+            wd.amount.setText("2.5")
+            assert wd.validate()
+            assert [w.chain for w in ctl.wallets()] == ["monero"]
+            assert ctl.wallet_holdings()["monero"] == ("XMR", 2.5)
+            ed = WalletDialog(ctl)
+            ed.addr.setText("0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045")
+            assert "hyperliquid" in ed.net_checks and ed.net_checks["ethereum"].isChecked()
+            WalletDetailDialog(ctl, ctl.wallets()[0], win)
+            win.nav("holdings")
+            win.pages["holdings"].render()
+            assert win.pages["holdings"].wal.rowCount() == 1
+            await asyncio.sleep(0)
+
             TargetsDialog(ctl)
             DcaDialog(ctl, None, None)
             r = RuleDialog(ctl, None, None)

@@ -19,6 +19,7 @@ from typing import Any
 from PyQt6.QtCore import QObject, QTimer, pyqtSignal
 
 from mazecrypto import i18n
+from mazecrypto.core import address as addr
 from mazecrypto.core import dca as dca_mod
 from mazecrypto.core import settings as cfg
 from mazecrypto.core.advisor import AdvisorInput, Formatter, Tip
@@ -30,6 +31,8 @@ from mazecrypto.core.models import Coin, Interval
 from mazecrypto.core.portfolio import Position, Summary, build_positions, summarize
 from mazecrypto.core.rules import Alert, Rule, RuleContext, data_needs, evaluate
 from mazecrypto.core.store import Cache, ProfileStore
+from mazecrypto.core.wallet import Transfer, Wallet, WalletBalance, is_synthetic, merge_activity, merge_wallets
+from mazecrypto.providers import wallets as wallets_mod
 from mazecrypto.providers.ai import AiUnavailable, LocalAI
 from mazecrypto.providers.service import MarketService, Snapshot
 from mazecrypto.ui import fmt
@@ -53,6 +56,7 @@ class Controller(QObject):
     alerts = pyqtSignal(list)                 # list[Alert]
     tipsChanged = pyqtSignal(list)            # list[Tip]
     aiChanged = pyqtSignal(bool)              # local AI available / not
+    walletsChanged = pyqtSignal()             # the list of watched addresses or their balances
 
     def __init__(self, settings: cfg.Settings):
         super().__init__()
@@ -67,6 +71,9 @@ class Controller(QObject):
         self.tech: dict[str, TechState] = {}
         self.ai: LocalAI | None = None
         self.ai_model = ""
+        # Last balance of every watched address, by wallet id: (balance or None, stale age, error).
+        self.wallet_data: dict[str, tuple[WalletBalance | None, float | None, str | None]] = {}
+        self.wallet_loading: set[str] = set()
         self._tasks: set[asyncio.Task] = set()
         self._refreshing = False
         self.timer = QTimer(self)
@@ -77,6 +84,7 @@ class Controller(QObject):
         self.snapshotReady.connect(lambda _s: self.update_tips())
         self.enriched.connect(self._enriched)
         self.portfolioChanged.connect(self.update_tips)
+        self.walletsChanged.connect(self.update_tips)
 
     # ── async plumbing ───────────────────────────────────────────────────────
     def run(self, coro: Awaitable[Any], done: Callable[[Any], None] | None = None,
@@ -138,6 +146,7 @@ class Controller(QObject):
 
     async def _show_cached(self) -> None:
         """Paint the last known data immediately; the network refresh replaces it."""
+        await self._refresh_wallets(cache_only=True)
         snap = await self.service.refresh(self.tracked_coins(), cache_only=True)
         if self.snap is None and any(r.price_fiat is not None for r in snap.rows):
             snap.offline = False        # not offline, just not refreshed yet
@@ -163,6 +172,19 @@ class Controller(QObject):
             cid, sym = getattr(r.condition, "coin_id", ""), getattr(r.condition, "symbol", "")
             if cid and sym:
                 coins.setdefault(cid, Coin(cid, sym, sym))
+        # Wallet coins: the chain's own coin up front, so the first balance already has a price.
+        for w in self.wallets():
+            if w.manual:
+                if w.coin_id:
+                    coins.setdefault(w.coin_id, Coin(w.coin_id, w.symbol, w.name or w.symbol))
+                continue
+            info = wallets_mod.chain(w.chain)
+            if info and info.native:
+                coins.setdefault(info.native.id, info.native)
+            bal = self.wallet_data.get(w.id, (None, None, None))[0]
+            for a in bal.assets if bal else ():
+                if not is_synthetic(a.coin_id) and a.amount > 0:
+                    coins.setdefault(a.coin_id, Coin(a.coin_id, a.symbol, a.name))
         return list(coins.values())
 
     def refresh(self) -> None:
@@ -174,8 +196,17 @@ class Controller(QObject):
 
     async def _refresh(self) -> None:
         try:
+            # Balances and prices in parallel; prices are shown as soon as they arrive.
+            wallet_job = asyncio.ensure_future(self._refresh_wallets())
             snap = await self.service.refresh(self.tracked_coins())
             self.snap = snap
+            self.snapshotReady.emit(snap)
+            with contextlib.suppress(Exception):
+                await wallet_job
+            have = {r.coin.id for r in snap.rows}
+            if any(c.id not in have for c in self.tracked_coins()):
+                snap = await self.service.refresh(self.tracked_coins())     # a wallet turned up a new coin
+                self.snap = snap
             debug(f"prices: {sum(r.price_fiat is not None for r in snap.rows)}/{len(snap.rows)} coins, "
                   f"offline={snap.offline}, stale_age={snap.stale_age and round(snap.stale_age)}, "
                   f"requests={self.service.http.requests}, errors={snap.errors[:3]}")
@@ -204,6 +235,146 @@ class Controller(QObject):
         else:
             self.status.emit("live", i18n.t("status.live", age=fmt.age(time.time() - s.ts)))
 
+    # ── wallets ──────────────────────────────────────────────────────────────
+    def wallets(self) -> list[Wallet]:
+        out = []
+        for d in self.store.get("wallets") or []:
+            try:
+                w = Wallet.from_dict(d)
+            except (KeyError, ValueError, TypeError):
+                continue
+            if wallets_mod.chain(w.chain):
+                out.append(w)
+        return out
+
+    def _save_wallets(self, lst: list[Wallet]) -> None:
+        self.store.put("wallets", [w.to_dict() for w in lst])
+        ids = {w.id for w in lst}
+        self.wallet_data = {k: val for k, val in self.wallet_data.items() if k in ids}
+
+    def _wallet_ttl(self) -> float:
+        return max(45.0, self.settings.refresh_seconds - 5.0)
+
+    async def _fetch_wallet(self, w: Wallet, cache_only: bool) -> None:
+        try:
+            f = await self.service.wallets.balance(w, self._wallet_ttl(), cache_only)
+            self.wallet_data[w.id] = (f.value, f.stale_age, f.error)
+        except Exception as e:  # noqa: BLE001 - one failing address must not stop the others
+            if not cache_only:
+                prev = self.wallet_data.get(w.id, (None, None, None))[0]
+                self.wallet_data[w.id] = (prev, None, str(e) or type(e).__name__)
+
+    async def _refresh_wallets(self, cache_only: bool = False) -> None:
+        """Every watched address at once; one that fails keeps its last balance, marked stale."""
+        lst = [w for w in self.wallets() if not w.manual]
+        if not lst:
+            return
+        await asyncio.gather(*(self._fetch_wallet(w, cache_only) for w in lst))
+        self.walletsChanged.emit()
+
+    def refresh_wallet(self, wallet_id: str) -> None:
+        w = next((x for x in self.wallets() if x.id == wallet_id), None)
+        if w is None or w.manual:
+            return
+
+        async def go() -> None:
+            self.wallet_loading.add(wallet_id)
+            self.walletsChanged.emit()
+            try:
+                await self._fetch_wallet(w, False)
+            finally:
+                self.wallet_loading.discard(wallet_id)
+            self._after_wallet_change()
+
+        self.run(go())
+
+    def _after_wallet_change(self) -> None:
+        self.walletsChanged.emit()
+        self.portfolioChanged.emit()
+        have = {r.coin.id for r in self.snap.rows} if self.snap else set()
+        if any(c.id not in have for c in self.tracked_coins()):
+            self.refresh()
+
+    def add_wallets(self, new: list[Wallet]) -> str | None:
+        """Add watched addresses (one per network). Returns an error message, or None when saved."""
+        cur = self.wallets()
+        if len(cur) + len(new) > wallets_mod.MAX_WALLETS:
+            return i18n.t("wal.err_too_many", n=wallets_mod.MAX_WALLETS)
+        taken = {addr.key(w.chain, w.address) for w in cur if not w.manual}
+        for w in new:
+            if not w.manual and addr.key(w.chain, w.address) in taken:
+                info = wallets_mod.chain(w.chain)
+                return i18n.t("wal.err_duplicate", chain=info.name if info else w.chain)
+        self._save_wallets(cur + new)
+        for w in new:
+            if not w.manual:
+                self.refresh_wallet(w.id)
+        self._after_wallet_change()
+        return None
+
+    def update_wallet(self, w: Wallet) -> None:
+        self._save_wallets([w if x.id == w.id else x for x in self.wallets()])
+        self._after_wallet_change()
+
+    def delete_wallet(self, wallet_id: str) -> None:
+        self._save_wallets([x for x in self.wallets() if x.id != wallet_id])
+        self.walletsChanged.emit()
+        self.portfolioChanged.emit()
+
+    def wallet_holdings(self) -> dict[str, tuple[str, float]]:
+        """Coin id -> (symbol, total amount) over the wallets that count toward the portfolio."""
+        out: dict[str, tuple[str, float]] = {}
+        for w in self.wallets():
+            if not w.in_portfolio:
+                continue
+            if w.manual:
+                items = [(w.coin_id, w.symbol, w.amount or 0.0)] if w.coin_id and (w.amount or 0) > 0 else []
+            else:
+                bal = self.wallet_data.get(w.id, (None, None, None))[0]
+                items = [(a.coin_id, a.symbol, a.amount) for a in (bal.assets if bal else ()) if a.amount > 0]
+            for cid, sym, amount in items:
+                out[cid] = (sym, out.get(cid, (sym, 0.0))[1] + amount)
+        return out
+
+    def wallet_value(self, w: Wallet) -> float | None:
+        prices = self.prices()[0]
+        if w.manual:
+            p = prices.get(w.coin_id)
+            return None if w.amount is None or p is None else w.amount * p
+        bal = self.wallet_data.get(w.id, (None, None, None))[0]
+        if bal is None:
+            return None
+        priced = [a.amount * prices[a.coin_id] for a in bal.assets if a.coin_id in prices]
+        if not priced and any(a.amount > 0 for a in bal.assets):
+            return None
+        return sum(priced)
+
+    async def wallet_activity(self, ids: list[str] | None = None) -> tuple[list[Transfer], list[str]]:
+        """History of ``ids`` (all wallets when None), merged so transfers between them show once."""
+        lst = [w for w in self.wallets() if not w.manual and (ids is None or w.id in ids)]
+        errors: list[str] = []
+
+        async def one(w: Wallet) -> list[Transfer]:
+            try:
+                f = await self.service.wallets.activity(w)
+            except Exception as e:  # noqa: BLE001
+                errors.append(str(e) or type(e).__name__)
+                return []
+            if f.error:
+                errors.append(f.error)
+            # A token the balance check did not accept (unpriced, flagged, dust) is spam in the history too.
+            bal = self.wallet_data.get(w.id, (None, None, None))[0]
+            accepted = {a.coin_id for a in bal.assets} if bal else set()
+            out = []
+            for t in f.value:
+                t.legs = [leg for leg in t.legs if not is_synthetic(leg.coin_id) or leg.coin_id in accepted]
+                if t.legs or t.fee is not None:
+                    out.append(t)
+            return out
+
+        parts = await asyncio.gather(*(one(w) for w in lst))
+        return merge_activity(parts), errors
+
     # ── settings ─────────────────────────────────────────────────────────────
     def apply_settings(self, new: cfg.Settings) -> None:
         old = self.settings
@@ -221,6 +392,7 @@ class Controller(QObject):
         if profile_changed:
             self.store.close()
             self.store = ProfileStore(cfg.data_dir() / "profiles" / f"{new.profile}.db")
+            self.wallet_data = {}
             self.portfolioChanged.emit()
         self.timer.setInterval(new.refresh_seconds * 1000)
         self.settingsChanged.emit()
@@ -238,14 +410,25 @@ class Controller(QObject):
                     fiat[r.coin.id] = r.price_fiat
                 if r.price_usd is not None:
                     usd[r.coin.id] = r.price_usd
+        # Tokens only a chain's indexer prices (never sent to CoinGecko).
+        rate = self.snap.fx.get(self.settings.fiat) if self.snap else None
+        for bal, _age, _err in self.wallet_data.values():
+            for a in bal.assets if bal else ():
+                if is_synthetic(a.coin_id) and a.price_usd:
+                    usd[a.coin_id] = a.price_usd
+                    if rate:
+                        fiat[a.coin_id] = a.price_usd * rate
         return fiat, usd
 
     def positions(self) -> dict[str, Position]:
         rate = self.snap.fx.get(self.settings.fiat) if self.snap else None
         try:
-            return build_positions(self.store.trades(), self.settings.fiat, rate)
+            from_trades = build_positions(self.store.trades(), self.settings.fiat, rate)
         except ValueError:
-            return {}
+            from_trades = {}
+        held = self.wallet_holdings()
+        # Wallets supply the amounts; trades still supply the average cost.
+        return merge_wallets(from_trades, held) if held else from_trades
 
     def summary(self) -> Summary:
         fiat, usd = self.prices()
@@ -255,7 +438,8 @@ class Controller(QObject):
         for c in self.tracked_coins():
             if c.id == coin_id:
                 return c.symbol
-        return coin_id
+        held = self.wallet_holdings().get(coin_id)
+        return held[0] if held else coin_id
 
     def save_trades_changed(self) -> None:
         self.portfolioChanged.emit()
@@ -333,7 +517,8 @@ class Controller(QObject):
         fiat = self.settings.fiat
         x = AdvisorInput(
             fiat=fiat, rows=self.snap.rows if self.snap else (), watchlist=[c.id for c in self.settings.watchlist],
-            summary=s, trades=len(trades), trades_without_rate=sum(1 for t in trades if not t.usd_rate),
+            summary=s, trades=len(trades), wallets=len(self.wallets()),
+            trades_without_rate=sum(1 for t in trades if not t.usd_rate),
             targets=self.store.targets(), names=names, plan_amount=plan.amount if plan else None, current=cur,
             plan_exists=plan is not None, rules=len(self.store.rules()), tech=self.tech,
             offline=bool(self.snap and self.snap.offline), stale_age=self.snap.stale_age if self.snap else None)

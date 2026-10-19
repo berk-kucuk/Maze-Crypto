@@ -34,6 +34,14 @@ class RateLimited(NetError):
     pass
 
 
+class HttpError(NetError):
+    """A definite answer that is not 200 — e.g. 404 for an address an indexer has never seen."""
+
+    def __init__(self, code: int, message: str):
+        super().__init__(message)
+        self.code = code
+
+
 class Http:
     def __init__(self, allowed_hosts: dict[str, float], proxy: str | None = None, timeout: float = 10.0,
                  retries: int = 2, transport: httpx.AsyncBaseTransport | None = None):
@@ -69,6 +77,13 @@ class Http:
             self._last[host] = time.monotonic()
 
     async def get(self, url: str, params: dict[str, Any] | None = None) -> httpx.Response:
+        return await self._request(url, params, None)
+
+    async def post(self, url: str, body: Any) -> httpx.Response:
+        """POST a JSON body (JSON-RPC reads). Same allow-list, spacing and retries as GET."""
+        return await self._request(url, None, body)
+
+    async def _request(self, url: str, params: dict[str, Any] | None, body: Any) -> httpx.Response:
         host = self._host(url)
         if self._down_until.get(host, 0.0) > time.monotonic():
             # Recently unreachable: fail fast so offline mode shows cached data at once.
@@ -78,7 +93,10 @@ class Http:
             await self._space(host)
             try:
                 self.requests += 1
-                r = await self._client.get(url, params=params)
+                if body is None:
+                    r = await self._client.get(url, params=params)
+                else:
+                    r = await self._client.post(url, json=body)
             except (httpx.ConnectError, httpx.ProxyError, httpx.UnsupportedProtocol) as e:
                 # Refused / no route / DNS / dead proxy: retrying right away will not help.
                 self._down_until[host] = time.monotonic() + DOWN_SECONDS
@@ -99,12 +117,21 @@ class Http:
                 await asyncio.sleep(0.4 * (attempt + 1))
                 continue
             if r.status_code != 200:
-                raise NetError(f"{host}: HTTP {r.status_code}")
+                raise HttpError(r.status_code, f"{host}: HTTP {r.status_code}")
             return r
         raise NetError(f"{host}: {type(last_exc).__name__ if last_exc else 'failed'}") from last_exc
 
     async def get_json(self, url: str, params: dict[str, Any] | None = None) -> Any:
         r = await self.get(url, params)
+        if len(r.content) > 16 * 1024 * 1024:
+            raise NetError("response too large")
+        try:
+            return json.loads(r.content)
+        except ValueError as e:
+            raise NetError(f"{urlparse(url).hostname}: invalid JSON") from e
+
+    async def post_json(self, url: str, body: Any) -> Any:
+        r = await self.post(url, body)
         if len(r.content) > 16 * 1024 * 1024:
             raise NetError("response too large")
         try:

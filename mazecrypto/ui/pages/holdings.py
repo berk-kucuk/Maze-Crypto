@@ -1,11 +1,12 @@
 """Holdings: positions with P/L, target vs actual allocation, trade log, import/export."""
 from __future__ import annotations
 
+import time
 from datetime import date
 from pathlib import Path
 
 from PyQt6.QtCore import QRectF, Qt
-from PyQt6.QtGui import QColor, QFont, QPainter
+from PyQt6.QtGui import QColor, QFont, QGuiApplication, QPainter
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QFileDialog,
@@ -20,9 +21,11 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from mazecrypto.core import address as addr
 from mazecrypto.core import export
 from mazecrypto.core.portfolio import OTHER, Drift, drift, split_contribution
 from mazecrypto.i18n import t
+from mazecrypto.providers import wallets as wallets_mod
 from mazecrypto.ui import fmt
 from mazecrypto.ui.controller import Controller
 from mazecrypto.ui.glass import Glass
@@ -117,6 +120,7 @@ class HoldingsPage(Page):
         io_btn.setMenu(menu)
         io_btn.setVisible(ctl.expert)
         self.actions.addWidget(io_btn)
+        self.actions.addWidget(button(t("wal.add"), "", self.add_wallet, "", "ph.wallet"))
         self.actions.addWidget(button(t("hold.add"), "Primary", self.add_trade, "Ctrl+N", "ph.plus"))
 
         self._first_sort = True
@@ -137,7 +141,46 @@ class HoldingsPage(Page):
                            t("hold.pnl"), "%", t("hold.pnl_usd"), t("hold.weight"), t("hold.target")])
         self.pos.cellDoubleClicked.connect(self._pos_double)
         self.pos.setColumnHidden(7, not ctl.expert)
-        self.tabs.addTab(self.pos, t("hold.tab_positions"))
+        pos_box = QWidget()
+        pl = QVBoxLayout(pos_box)
+        pl.setContentsMargins(0, 0, 0, 0)
+        pl.addWidget(self.pos, 1)
+        self.pos_note = label("", "Small", wrap=True)
+        pl.addWidget(self.pos_note)
+        self.tabs.addTab(pos_box, t("hold.tab_positions"))
+
+        # Wallets: watched addresses, then their recent transfers.
+        wal = QWidget()
+        wl = QVBoxLayout(wal)
+        wl.setContentsMargins(0, 12, 0, 0)
+        wl.setSpacing(8)
+        wrow = QHBoxLayout()
+        self.wal_total = label("", "Strong")
+        wrow.addWidget(self.wal_total, 1)
+        wrow.addWidget(button(t("wal.refresh"), "", self._refresh_wallets, icon_name="ph.arrows-clockwise"))
+        wrow.addWidget(button(t("wal.add"), "Primary", self.add_wallet, icon_name="ph.plus"))
+        wl.addLayout(wrow)
+        self.wal = _table([t("wal.name"), t("wal.network"), t("wal.address"), t("wal.assets"), t("hold.value"),
+                           t("wal.status")])
+        self.wal.setSortingEnabled(False)
+        self.wal.cellDoubleClicked.connect(lambda r, _c: self._open_wallet(r))
+        self.wal.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.wal.customContextMenuRequested.connect(self._wallet_menu)
+        wl.addWidget(self.wal, 1)
+        self.wal_empty = label(t("wal.empty_b"), "Mid", wrap=True)
+        wl.addWidget(self.wal_empty)
+        wl.addWidget(label(t("wal.activity").upper(), "SectionTitle"))
+        from mazecrypto.ui.dialogs.wallet_detail import activity_headers
+
+        self.act = _table(activity_headers())
+        self.act.setSortingEnabled(False)
+        self.act.cellDoubleClicked.connect(self._open_tx)
+        wl.addWidget(self.act, 1)
+        self.act_note = label("", "Small", wrap=True)
+        wl.addWidget(self.act_note)
+        wl.addWidget(label(t("wal.safe_b"), "Small", wrap=True))
+        self.tabs.addTab(wal, t("wal.tab"))
+        self._act_stamp = ""
 
         alloc = QWidget()
         al = QVBoxLayout(alloc)
@@ -159,7 +202,7 @@ class HoldingsPage(Page):
         al.addLayout(row)
         al.addWidget(label(t("hold.split_note"), "Small", wrap=True))
         al.addStretch()
-        self.tabs.addTab(scrolled(alloc), t("hold.tab_alloc"))
+        self.tabs.insertTab(2, scrolled(alloc), t("hold.tab_alloc"))
 
         self.trades = _table([t("trade.date"), t("trade.side"), t("col.coin"), t("hold.amount"), t("trade.cost"),
                               t("trade.fee"), t("hold.unit"), t("trade.platform"), t("trade.note")])
@@ -171,6 +214,7 @@ class HoldingsPage(Page):
         self.listen(ctl.snapshotReady, lambda _s: self.render())
         self.listen(ctl.portfolioChanged, self.render)
         self.listen(ctl.settingsChanged, self.render)
+        self.listen(ctl.walletsChanged, self.render)
         self.render()
 
     # ── rendering ────────────────────────────────────────────────────────────
@@ -179,9 +223,11 @@ class HoldingsPage(Page):
         s = self.ctl.summary()
         self.c_value.set(fmt.money(s.value_fiat, fiat, 2) if s.holdings else "—",
                          fmt.money(s.value_usd, "USD", 2) if s.value_usd is not None and fiat != "USD" else "")
-        self.c_cost.set(fmt.money(s.cost_fiat, fiat, 2) if s.holdings else "—",
+        self.c_cost.set(fmt.money(s.cost_fiat, fiat, 2) if s.holdings and self.ctl.store.trades() else "—",
                         t("hold.n_trades", n=len(self.ctl.store.trades())))
-        self.c_pnl.set(fmt.signed_money(s.pnl_fiat, fiat) if s.holdings else "—", fmt.pct(s.pnl_pct),
+        no_cost = s.cost_fiat <= 0 and bool(s.unknown_cost)
+        self.c_pnl.set(fmt.signed_money(s.pnl_fiat, fiat) if s.holdings and not no_cost else "—",
+                       t("hold.from_wallets") if no_cost else fmt.pct(s.pnl_pct),
                        change_color(s.pnl_fiat), change_color(s.pnl_fiat))
         self.c_usd.set(fmt.signed_money(s.pnl_usd, "USD"), t("hold.usd_basis"), change_color(s.pnl_usd))
         self.c_real.set(fmt.signed_money(s.realized_fiat, fiat) if s.realized_fiat else "—", "",
@@ -195,12 +241,13 @@ class HoldingsPage(Page):
             cid = p.coin_id
             tgt = targets.get(cid)
             cells = [
-                text_item(p.symbol, data=cid),
+                text_item(p.symbol + ("  · " + t("wal.badge") if p.source == "wallet" else ""), data=cid),
                 NumItem(fmt.amount(p.amount), p.amount),
                 NumItem(fmt.money(p.avg_cost_fiat, fiat), p.avg_cost_fiat, P["text_mid"]),
                 NumItem(fmt.money(h.price_fiat, fiat), h.price_fiat),
                 NumItem(fmt.money(h.value_fiat, fiat, 2), h.value_fiat),
-                NumItem(fmt.signed_money(h.pnl_fiat, fiat), h.pnl_fiat, change_color(h.pnl_fiat)),
+                NumItem(fmt.signed_money(h.pnl_fiat, fiat) if p.cost_known else t("hold.no_cost"), h.pnl_fiat,
+                        change_color(h.pnl_fiat) if p.cost_known else P["muted"]),
                 NumItem(fmt.pct(h.pnl_pct), h.pnl_pct, change_color(h.pnl_pct)),
                 NumItem(fmt.signed_money(h.pnl_usd, "USD"), h.pnl_usd, change_color(h.pnl_usd)),
                 NumItem(fmt.pct(s.weights.get(cid), 1, False), s.weights.get(cid)),
@@ -212,6 +259,14 @@ class HoldingsPage(Page):
         if not self.pos.horizontalHeader().isSortIndicatorShown() or self._first_sort:
             self._first_sort = False
             self.pos.sortItems(4, Qt.SortOrder.DescendingOrder)
+
+        if s.unknown_cost and self.ctl.store.trades():
+            shown = ", ".join(s.unknown_cost[:6]) + (f" +{len(s.unknown_cost) - 6}" if len(s.unknown_cost) > 6 else "")
+            self.pos_note.setText(t("hold.unknown_cost", coins=shown))
+        else:
+            self.pos_note.setText(t("hold.wallets_only") if s.unknown_cost else "")
+        self.pos_note.setVisible(bool(self.pos_note.text()))
+        self._render_wallets()
 
         names = {cid: sym for cid, sym in self.ctl.store.target_symbols().items()}
         names |= {h.position.coin_id: h.position.symbol for h in s.holdings}
@@ -244,6 +299,130 @@ class HoldingsPage(Page):
                 self.trades.setItem(i, c, it)
         self.trades.setSortingEnabled(True)
 
+    def _render_wallets(self) -> None:
+        from mazecrypto.ui.dialogs.wallet_detail import wallet_title
+
+        fiat = self.ctl.settings.fiat
+        ws = self.ctl.wallets()
+        self.wal_empty.setVisible(not ws)
+        self.wal.setVisible(bool(ws))
+        total = 0.0
+        self.wal.setRowCount(len(ws))
+        for i, w in enumerate(ws):
+            info = wallets_mod.chain(w.chain)
+            bal, age, err = self.ctl.wallet_data.get(w.id, (None, None, None))
+            value = self.ctl.wallet_value(w)
+            if w.in_portfolio and value:
+                total += value
+            if w.manual:
+                assets = f"{fmt.amount(w.amount)} {w.symbol}"
+            else:
+                held = [a for a in (bal.assets if bal else ()) if a.amount > 0]
+                assets = (f"{fmt.amount(held[0].amount)} {held[0].symbol}" if held else "—") + (
+                    f"  +{len(held) - 1}" if len(held) > 1 else "")
+            if w.id in self.ctl.wallet_loading:
+                status, color = t("status.updating"), P["accent"]
+            elif err and bal is None:
+                status, color = t("wal.failed"), P["down"]
+            elif err:
+                status, color = t("wal.stale", age=fmt.age(time.time() - bal.ts)), P["warn"]
+            elif not w.in_portfolio:
+                status, color = t("wal.watch_only"), P["muted"]
+            elif w.manual:
+                status, color = t("wal.manual_short"), P["muted"]
+            elif bal:
+                status, color = fmt.age(time.time() - bal.ts), P["muted"]
+            else:
+                status, color = t("status.updating"), P["muted"]
+            cells = [text_item(wallet_title(w), data=w.id), text_item(info.name if info and w.chain != "manual"
+                                                                       else t("wal.manual_short"), P["text_mid"]),
+                     text_item(addr.short(w.address, 8, 6) if w.address else "", P["text_mid"]), text_item(assets),
+                     NumItem(fmt.money(value, fiat, 2), value, None if w.in_portfolio else P["text_mid"]),
+                     text_item(status, color)]
+            for c, it in enumerate(cells):
+                self.wal.setItem(i, c, it)
+        self.wal_total.setText(t("wal.total_line", value=fmt.money(total, fiat, 2), n=len(ws)) if ws else "")
+        # Reload the history when the set of wallets or their balances changed.
+        stamp = ",".join(f"{w.id}:{(self.ctl.wallet_data.get(w.id) or (None,))[0] and self.ctl.wallet_data[w.id][0].ts}"
+                         for w in ws)
+        if stamp != self._act_stamp:
+            self._act_stamp = stamp
+            self._load_activity(ws)
+
+    def _load_activity(self, ws) -> None:
+        from mazecrypto.ui.dialogs.wallet_detail import fill_activity
+
+        readable = [w for w in ws if (info := wallets_mod.chain(w.chain)) and info.activity]
+        if not readable:
+            self.act.setRowCount(0)
+            self.act_note.setText(t("wal.no_history_chain") if ws else "")
+            return
+        self.act_note.setText(t("status.updating"))
+
+        def done(res) -> None:
+            lst, errors = res
+            fill_activity(self.act, lst[:30], self.ctl, True)
+            self.act_note.setText(t("wal.history_failed") if errors and not lst else t("wal.no_history") if not lst
+                                  else t("wal.history_note") + (" " + t("wal.history_partial") if errors else ""))
+
+        self.ctl.run(self.ctl.wallet_activity(None), done, lambda _e: self.act_note.setText(t("wal.history_failed")))
+
+    def _wallet_at(self, row: int):
+        it = self.wal.item(row, 0)
+        wid = it.data(Qt.ItemDataRole.UserRole) if it else None
+        return next((w for w in self.ctl.wallets() if w.id == wid), None)
+
+    def _open_wallet(self, row: int) -> None:
+        from mazecrypto.ui.dialogs.wallet_detail import WalletDetailDialog
+
+        w = self._wallet_at(row)
+        if w:
+            WalletDetailDialog(self.ctl, w, self).exec()
+
+    def _open_tx(self, row: int, _col: int) -> None:
+        from mazecrypto.ui.dialogs.wallet_detail import open_url
+
+        it = self.act.item(row, 0)
+        open_url(it.data(Qt.ItemDataRole.UserRole) if it else None)
+
+    def _wallet_menu(self, pos) -> None:
+        from mazecrypto.ui.dialogs.wallet_detail import open_url
+
+        row = self.wal.rowAt(pos.y())
+        w = self._wallet_at(row) if row >= 0 else None
+        if not w:
+            return
+        m = QMenu(self)
+        m.addAction(t("wal.open"), lambda: self._open_wallet(row))
+        m.addAction(t("btn.edit"), lambda: self._edit_wallet(w))
+        if w.address:
+            m.addAction(t("wal.copy"), lambda: QGuiApplication.clipboard().setText(w.address))
+            url = wallets_mod.explorer_url(w.chain, w.address)
+            if url:
+                m.addAction(t("wal.explorer"), lambda: open_url(url))
+        m.addSeparator()
+        m.addAction(t("btn.delete"), lambda: self._delete_wallet(w))
+        m.exec(self.wal.viewport().mapToGlobal(pos))
+
+    def _edit_wallet(self, w) -> None:
+        from mazecrypto.ui.dialogs.wallet_editor import WalletDialog
+
+        WalletDialog(self.ctl, self, w).exec()
+
+    def _delete_wallet(self, w) -> None:
+        if confirm(self, t("wal.delete_q"), t("wal.delete_b"), t("btn.delete"), danger=True):
+            self.ctl.delete_wallet(w.id)
+
+    def _refresh_wallets(self) -> None:
+        for w in self.ctl.wallets():
+            self.ctl.refresh_wallet(w.id)
+
+    def add_wallet(self, coin=None) -> None:
+        from mazecrypto.ui.dialogs.wallet_editor import WalletDialog
+
+        if WalletDialog(self.ctl, self, coin=coin).exec():
+            self.tabs.setCurrentIndex(1)
+
     def _split(self) -> None:
         targets = self.ctl.store.targets()
         try:
@@ -270,15 +449,17 @@ class HoldingsPage(Page):
             self.add_trade()
         elif detail == "targets":
             self._edit_targets()
-        elif detail in ("alloc", "trades"):
-            self.tabs.setCurrentIndex(1 if detail == "alloc" else 2)
+        elif detail in ("alloc", "trades", "wallets"):
+            self.tabs.setCurrentIndex({"wallets": 1, "alloc": 2, "trades": 3}[detail])
+        elif detail == "wallet:add":
+            self.add_wallet()
 
     def add_trade(self) -> None:
         from mazecrypto.ui.dialogs.trade_editor import TradeDialog
 
         if TradeDialog(self.ctl, self).exec():
             self.ctl.save_trades_changed()
-            self.tabs.setCurrentIndex(2)
+            self.tabs.setCurrentIndex(3)
 
     def _trade_at(self, row: int):
         it = self.trades.item(row, 0)
@@ -331,7 +512,7 @@ class HoldingsPage(Page):
 
         if TargetsDialog(self.ctl, self).exec():
             self.ctl.refresh()
-            self.tabs.setCurrentIndex(1)
+            self.tabs.setCurrentIndex(2)
 
     def _export(self, kind: str) -> None:
         trades = self.ctl.store.trades()

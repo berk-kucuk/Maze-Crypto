@@ -23,10 +23,16 @@ def _alpha(hex_color: str, alpha: int) -> QColor:
 
 
 class Aurora(QWidget):
-    """Window background with slow, faint gold and violet light."""
+    """Window background with slow, faint gold and violet light.
 
-    def __init__(self, parent: QWidget | None = None, animated: bool = True):
+    With ``corner_radius`` the background is a rounded rectangle with a hairline
+    rim, for a frameless window whose own background is transparent; square
+    again while the window fills the screen (maximised or full screen).
+    """
+
+    def __init__(self, parent: QWidget | None = None, animated: bool = True, corner_radius: int = 0):
         super().__init__(parent)
+        self.corner_radius = corner_radius
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, False)
         self._phase = 0.0
         self._animated = animated
@@ -46,6 +52,7 @@ class Aurora(QWidget):
     def eventFilter(self, _obj, e) -> bool:
         if e.type() in (QEvent.Type.ActivationChange, QEvent.Type.WindowStateChange):
             self._sync()
+            self.update()
         return False
 
     def _sync(self) -> None:
@@ -64,6 +71,12 @@ class Aurora(QWidget):
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         r = QRectF(self.rect())
+        win = self.window()
+        radius = 0 if win.isMaximized() or win.isFullScreen() else self.corner_radius
+        if radius:
+            clip = QPainterPath()
+            clip.addRoundedRect(r.adjusted(0.5, 0.5, -0.5, -0.5), radius, radius)
+            p.setClipPath(clip)
         p.fillRect(r, QColor(P["bg"]))
         w, h = r.width(), r.height()
         ph = self._phase
@@ -86,6 +99,12 @@ class Aurora(QWidget):
             g.setColorAt(1.0, end)
             p.setBrush(QBrush(g))
             p.drawEllipse(c, rad, rad)
+        if radius:
+            # A hairline rim, so the rounded edge reads against any desktop.
+            p.setClipping(False)
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            p.setPen(QPen(QColor(255, 255, 255, 30), 1))
+            p.drawRoundedRect(r.adjusted(0.5, 0.5, -0.5, -0.5), radius, radius)
         p.end()
 
 
