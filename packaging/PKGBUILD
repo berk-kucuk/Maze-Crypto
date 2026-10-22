@@ -1,9 +1,9 @@
 # Maintainer: Berk Küçük <dev.berkkucukk@gmail.com>
 
 pkgname=maze-crypto
-pkgver=0.4.1
+pkgver=0.5.1
 pkgrel=1
-pkgdesc="Read-only crypto market, portfolio and DCA tracker for Maze Linux"
+pkgdesc="Read-only crypto market, portfolio and DCA tracker for Maze Linux, with Ledger and Monero view-only wallets"
 arch=('any')
 url="https://mazelinux.berkkucukk.com.tr"
 license=('GPL-3.0-or-later')
@@ -15,13 +15,16 @@ depends=(
     'python-pyqtgraph'      # charts
     'python-socksio'        # SOCKS5 / Tor support in httpx
     'python-qtawesome'      # interface icons (also pulled in by maze-python)
+    'python-secretstorage'  # Monero view keys in the desktop keyring (KWallet / GNOME Keyring)
+    'libsodium'             # Ed25519 for scanning Monero view-only wallets
     'hicolor-icon-theme'
 )
 makedepends=('python')
 optdepends=(
     'inter-font: the interface typeface of the Maze apps'
     'ollama: local AI answers on the home page (or install maze-ai)'
-    'tor: route every request through Tor (Settings → Network)'
+    'tor: Monero sync (always over Tor) and routing every request through Tor'
+    'ledger-udev: USB access to a Ledger (add accounts from a Ledger)'
 )
 # LOCAL BUILD: the source tarball is generated from the working tree by
 # ../build-pkg.sh (NOT fetched from a remote).

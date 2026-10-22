@@ -14,14 +14,15 @@ import re
 from dataclasses import dataclass
 
 # Networks that use Ethereum-style 0x addresses; Hyperliquid (HyperCore + HyperEVM) included.
-EVM_CHAINS = ("ethereum", "base", "arbitrum", "optimism", "polygon", "hyperliquid")
+EVM_CHAINS = ("ethereum", "base", "arbitrum", "optimism", "polygon", "bsc", "avalanche", "hyperliquid")
 
 _SCHEMES = {"bitcoin", "litecoin", "ethereum", "solana", "tron", "monero"}
 _HEX40 = re.compile(r"^0x[0-9a-fA-F]{40}$")
 _HEX64 = re.compile(r"^(0x)?[0-9a-fA-F]{64}$")
 _WORD = re.compile(r"^[a-zA-Z]{2,12}$")
 _XPRV = ("xprv", "yprv", "zprv", "tprv", "uprv", "vprv", "ltpv", "ttpv")
-_XPUB = ("xpub", "ypub", "zpub", "tpub", "upub", "vpub", "ltub", "mtub")
+_XPUB = ("xpub", "ypub", "zpub", "ltub", "mtub")
+_TPUB = ("tpub", "upub", "vpub")
 
 
 @dataclass(frozen=True, slots=True)
@@ -40,13 +41,26 @@ class Secret:
 
 
 @dataclass(frozen=True, slots=True)
+class Account:
+    """A watch-only HD account key (xpub / ypub / zpub / Ltub / Mtub).
+
+    ``script`` is None when the version does not say (a plain xpub can be BIP-44
+    legacy or BIP-86 Taproot): ask.
+    """
+
+    xpub: str
+    chains: tuple[str, ...]
+    script: str | None
+
+
+@dataclass(frozen=True, slots=True)
 class Bad:
-    """Not usable: ``empty``, ``xpub``, ``testnet``, ``checksum`` or ``unknown``."""
+    """Not usable: ``empty``, ``testnet``, ``checksum`` or ``unknown``."""
 
     reason: str
 
 
-Result = Ok | Secret | Bad
+Result = Ok | Secret | Account | Bad
 
 
 def clean(text: str) -> str:
@@ -96,8 +110,16 @@ def parse(text: str) -> Result:
     if not s or len(s) > 120 or any(c.isspace() for c in s):
         return Bad("unknown")
     lower = s.lower()
+    if lower.startswith(_TPUB):
+        return Bad("testnet")
     if lower.startswith(_XPUB):
-        return Bad("xpub")
+        from mazecrypto.core import hd
+
+        k = hd.parse(s)
+        if k is None:
+            return Bad("checksum")
+        chains, script = hd.KINDS[k.version]
+        return Account(s, chains, script)
 
     # EVM: 0x + 40 hex. Mixed case must carry a valid EIP-55 checksum.
     if _HEX40.match(s):
@@ -252,6 +274,19 @@ def b58decode_monero(s: str) -> bytes | None:
             return None
         out += n.to_bytes(size, "big")
     return bytes(out)
+
+
+def b58encode_monero(data: bytes) -> str:
+    out = []
+    for i in range(0, len(data), 8):
+        block = data[i : i + 8]
+        n = int.from_bytes(block, "big")
+        chars = []
+        for _ in range(_BLOCK_CHARS[len(block)]):
+            n, r = divmod(n, 58)
+            chars.append(B58[r])
+        out.append("".join(reversed(chars)))
+    return "".join(out)
 
 
 # ── bech32 / bech32m ───────────────────────────────────────────────────────

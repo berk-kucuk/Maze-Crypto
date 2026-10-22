@@ -68,7 +68,23 @@ def test_secrets_are_refused():
     assert addr.parse("[" + ",".join(map(str, range(1, 65))) + "]") == addr.Secret("private_key")
     assert addr.parse(
         "xpub661MyMwAqRbcFtXgS5sYJABqqG9YLmC4Q1Rdap9gSE8NqtwybGhePY2gZ29ESFjqJoCu1Rupje8YtGqsefD265TMg7usUDFdp6W1EGMcet8"
-    ) == addr.Bad("xpub")
+    ).chains == ("bitcoin",)
+
+
+def test_hd_accounts():
+    from mazecrypto.core import hd
+
+    # BIP-84 / BIP-86 test vectors ("abandon … about").
+    z = hd.parse(
+        "zpub6rFR7y4Q2AijBEqTUquhVz398htDFrtymD9xYYfG1m4wAcvPhXNfE3EfH1r1ADqtfSdVCToUG868RvUUkgDKf31mGDtKsAYz2oz2AGutZYs"
+    )
+    assert hd.address(z, "bitcoin", "wpkh", 0, 0) == "bc1qcr8te4kr609gcawutmrza0j4xv80jy8z306fyu"
+    assert hd.address(z, "bitcoin", "wpkh", 1, 0) == "bc1q8c6fshw2dlwun7ekn9qwf37cu2rn755upcp6el"
+    x = hd.parse(
+        "xpub6BgBgsespWvERF3LHQu6CnqdvfEvtMcQjYrcRzx53QJjSxarj2afYWcLteoGVky7D3UKDP9QyrLprQ3VCECoY49yfdDEHGCtMMj92pReUsQ"
+    )
+    assert hd.address(x, "bitcoin", "tr", 0, 0) == "bc1p5cyxnuxmeuwuvkwfem96lqzszd02n6xdcjrs20cac6yqjjwudpxqkedrcr"
+    assert hd._ripemd160(b"abc").hex() == "8eb208f7e05d987a9b044a8e98c6b087f15a0bfc"
 
 
 def test_wallet_amounts_keep_trade_cost():

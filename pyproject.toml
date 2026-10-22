@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "maze-crypto"
-version = "0.4.1"
+version = "0.5.1"
 description = "Read-only crypto market, portfolio and DCA tracker for Maze Linux"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -21,6 +21,7 @@ dependencies = [
     "numpy==2.5.4",
     "cryptography==50.0.2",
     "qtawesome==1.4.2",
+    "secretstorage==3.3.3",
 ]
 
 [project.optional-dependencies]

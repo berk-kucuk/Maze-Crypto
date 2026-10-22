@@ -28,6 +28,7 @@ from typing import Any, TypeVar
 from urllib.parse import urlparse
 
 from mazecrypto.core import address as addr
+from mazecrypto.core import hd
 from mazecrypto.core import validate as v
 from mazecrypto.core.models import Coin
 from mazecrypto.core.store import Cache
@@ -104,8 +105,25 @@ CHAINS: tuple[ChainInfo, ...] = (
         "https://polygonscan.com/address/{a}",
         "https://polygonscan.com/tx/{t}",
     ),
-    # Monero balances cannot be read from an address — that is the point of Monero.
-    ChainInfo("monero", "Monero", Coin("monero", "XMR", "Monero"), manual=True),
+    ChainInfo(
+        "bsc",
+        "BNB Chain",
+        Coin("binancecoin", "BNB", "BNB"),
+        "https://bscscan.com/address/{a}",
+        "https://bscscan.com/tx/{t}",
+    ),
+    ChainInfo(
+        "avalanche",
+        "Avalanche C-Chain",
+        Coin("avalanche-2", "AVAX", "Avalanche"),
+        "https://snowtrace.io/address/{a}",
+        "https://snowtrace.io/tx/{t}",
+    ),
+    # Monero balances cannot be read from an address — that is the point of Monero. A view-only
+    # wallet (address + private view key) is scanned locally over Tor; otherwise the user enters it.
+    ChainInfo(
+        "monero", "Monero", Coin("monero", "XMR", "Monero"), "", "https://xmrchain.net/tx/{t}", True, manual=True
+    ),
     ChainInfo("manual", "Manual", None, manual=True),
 )
 _BY_ID = {c.id: c for c in CHAINS}
@@ -140,6 +158,10 @@ TOKENS: tuple[KnownToken, ...] = (
     KnownToken("optimism", "0x0b2c639c533813f4aa9d7837caf62653d097ff85", USDC, 6),
     KnownToken("polygon", "0x3c499c542cef5e3811e1192ce70d8cc03d5c3359", USDC, 6),
     KnownToken("polygon", "0xc2132d05d31c914a87c6611c10748aeb04b58e8f", USDT, 6),
+    KnownToken("bsc", "0x55d398326f99059ff775485246999027b3197955", USDT, 18),
+    KnownToken("bsc", "0x8ac76a51cc950d9822d68b83fe1ad97b32cd580d", USDC, 18),
+    KnownToken("avalanche", "0xb97ef9ef8734c71904d8002f8b6bc66dd9c48a6e", USDC, 6),
+    KnownToken("avalanche", "0x9702230a8ea53601f5cd2dc00fdbc13d4df4a8c7", USDT, 6),
     KnownToken("solana", "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", USDC, 6),
     KnownToken("solana", "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB", USDT, 6),
     KnownToken(
@@ -202,8 +224,22 @@ EVM_RPC = {
     ),
     "optimism": ("https://optimism-rpc.publicnode.com", "https://mainnet.optimism.io", "https://optimism.drpc.org"),
     "polygon": ("https://polygon-bor-rpc.publicnode.com", "https://polygon.drpc.org"),
+    "bsc": ("https://bsc-rpc.publicnode.com", "https://bsc-dataseed.bnbchain.org", "https://bsc.drpc.org"),
+    "avalanche": (
+        "https://avalanche-c-chain-rpc.publicnode.com",
+        "https://api.avax.network/ext/bc/C/rpc",
+        "https://avalanche.drpc.org",
+    ),
 }
-EVM_CHAIN_ID = {"ethereum": 1, "base": 8453, "arbitrum": 42161, "optimism": 10, "polygon": 137}
+EVM_CHAIN_ID = {
+    "ethereum": 1,
+    "base": 8453,
+    "arbitrum": 42161,
+    "optimism": 10,
+    "polygon": 137,
+    "bsc": 56,
+    "avalanche": 43114,
+}
 SOLANA_RPC = ("https://api.mainnet-beta.solana.com", "https://solana-rpc.publicnode.com")
 SPL_PROGRAMS = ("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA", "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb")
 JUPITER = "https://lite-api.jup.ag"
@@ -231,6 +267,12 @@ HOSTS = {
     "arbitrum.drpc.org": 0.3,
     "optimism.drpc.org": 0.3,
     "polygon.drpc.org": 0.3,
+    "bsc-rpc.publicnode.com": 0.2,
+    "bsc-dataseed.bnbchain.org": 0.3,
+    "bsc.drpc.org": 0.3,
+    "avalanche-c-chain-rpc.publicnode.com": 0.2,
+    "api.avax.network": 0.3,
+    "avalanche.drpc.org": 0.3,
     "api.mainnet-beta.solana.com": 0.35,
     "solana-rpc.publicnode.com": 0.35,
     "lite-api.jup.ag": 1.0,
@@ -240,6 +282,11 @@ HOSTS = {
 }
 
 TTL_ACTIVITY = 300
+TTL_ACCOUNT = 300  # HD accounts take one lookup per address: refreshed less often
+GAP_RECEIVE = 20
+GAP_CHANGE = 10
+MAX_HD_INDEX = 1000
+MAX_HD_HISTORY_ADDRESSES = 20
 DUST_USD = 0.01
 MAX_TOKEN_LOOKUPS = 100
 MIN_MARKET_CAP_USD = 1_000_000.0
@@ -369,6 +416,7 @@ class WalletService:
         async def fetch() -> dict:
             return (await self._fetch_balance(w)).to_dict()
 
+        ttl = max(ttl, TTL_ACCOUNT) if w.account else ttl
         f = await self._cached(f"w:bal:{addr.key(w.chain, w.address)}", ttl, cache_only, fetch)
         return Fetched(WalletBalance.from_dict(f.value), f.stale_age, f.error)
 
@@ -390,6 +438,8 @@ class WalletService:
 
     async def _fetch_balance(self, w: Wallet) -> WalletBalance:
         c = w.chain
+        if w.account:
+            return await self._account_balance(w)
         if c in ESPLORA:
             return await self._esplora_balance(w)
         if c == "ethereum":
@@ -409,6 +459,8 @@ class WalletService:
 
     async def _fetch_activity(self, w: Wallet) -> list[Transfer]:
         c = w.chain
+        if w.account:
+            return await self._account_activity(w)
         if c in ESPLORA:
             return await self._esplora_activity(w)
         if c == "ethereum":
@@ -505,6 +557,132 @@ class WalletService:
             return out
 
         return await self._first_ok(ESPLORA[w.chain], call)
+
+    # ── Bitcoin / Litecoin HD accounts (xpub) ──────────────────────────────
+    async def address_tx_count(self, chain_id: str, address: str) -> int:
+        """Transactions an address has seen, for account discovery (Ledger)."""
+
+        async def call(base: str) -> int:
+            o = v.mapping(await self.http.get_json(f"{base}/address/{address}"))
+            return int(o["chain_stats"].get("tx_count", 0)) + int((o.get("mempool_stats") or {}).get("tx_count", 0))
+
+        return await self._first_ok(ESPLORA[chain_id], call)
+
+    async def _scan_account(self, w: Wallet) -> list[tuple[str, int, int, int, int, int]]:
+        """(address, branch, index, tx count, confirmed sats, pending sats) up to the gap limit on both branches.
+
+        Receive (0) and change (1) are walked until GAP_RECEIVE / GAP_CHANGE unused
+        addresses in a row — the gap limit wallets and Ledger Live use — so every
+        address the account has handed out is found.
+        """
+        key = hd.parse(w.address)
+        if key is None:
+            raise v.ValidationError("extended public key")
+
+        async def branch(change: int, gap: int) -> list[tuple[str, int, int, int, int, int]]:
+            out = []
+            node = key.child(change)
+            unused = i = 0
+            while node is not None and unused < gap and i < MAX_HD_INDEX:
+                k = node.child(i)
+                if k is not None:
+                    a = hd.address_of(k.pub, w.chain, w.script)
+
+                    async def call(base: str, a: str = a) -> dict:
+                        return v.mapping(await self.http.get_json(f"{base}/address/{a}"))
+
+                    o = await self._first_ok(ESPLORA[w.chain], call)
+                    ch, mem = o["chain_stats"], o.get("mempool_stats") or {}
+
+                    def net(s: dict) -> int:
+                        return int(v.number(s.get("funded_txo_sum", 0))) - int(v.number(s.get("spent_txo_sum", 0)))
+
+                    n = int(ch.get("tx_count", 0)) + int(mem.get("tx_count", 0))
+                    out.append((a, change, i, n, net(ch), net(mem)))
+                    unused = 0 if n else unused + 1
+                i += 1
+            return out
+
+        recv, chg = await asyncio.gather(branch(0, GAP_RECEIVE), branch(1, GAP_CHANGE))
+        return recv + chg
+
+    async def _account_balance(self, w: Wallet) -> WalletBalance:
+        rows = await self._scan_account(w)
+        coin = self._native(w)
+        confirmed = sum(r[4] for r in rows) / 1e8
+        pending = sum(r[5] for r in rows) / 1e8
+        nxt = next((r[0] for r in rows if r[1] == 0 and r[3] == 0), "")
+        self.cache.put(
+            f"w:hd:{w.address}", {"used": [r[0] for r in rows if r[3]], "next": nxt, "n": sum(1 for r in rows if r[3])}
+        )
+        return WalletBalance(
+            [Asset(coin.id, coin.symbol, coin.name, max(0.0, confirmed + pending), pending=pending)],
+            time.time(),
+            sum(r[3] for r in rows),
+        )
+
+    def account_info(self, w: Wallet) -> tuple[str, int] | None:
+        """The next unused receive address and how many addresses have been used, from the last scan."""
+        st = self.cache.stale(f"w:hd:{w.address}")
+        if st is None or not isinstance(st[1], dict):
+            return None
+        return str(st[1].get("next", "")), int(st[1].get("n", 0))
+
+    async def _account_activity(self, w: Wallet) -> list[Transfer]:
+        st = self.cache.stale(f"w:hd:{w.address}")
+        used = (
+            list(st[1].get("used", []))
+            if st and isinstance(st[1], dict)
+            else [r[0] for r in await self._scan_account(w) if r[3]]
+        )
+        mine = set(used)
+        coin = self._native(w)
+        txs: dict[str, dict] = {}
+        for a in used[:MAX_HD_HISTORY_ADDRESSES]:
+
+            async def call(base: str, a: str = a) -> list:
+                return await self.http.get_json(f"{base}/address/{a}/txs")
+
+            for tx in await self._first_ok(ESPLORA[w.chain], call):
+                txs.setdefault(str(tx.get("txid")), tx)
+        out = []
+        for tx in txs.values():
+            try:
+                received = spent = 0
+                frm = to = ""
+                for vin in tx.get("vin") or []:
+                    prev = vin.get("prevout") or {}
+                    a = prev.get("scriptpubkey_address", "")
+                    if a in mine:
+                        spent += int(v.number(prev.get("value")))
+                    elif not frm:
+                        frm = a
+                for o in tx.get("vout") or []:
+                    a = o.get("scriptpubkey_address", "")
+                    if a in mine:
+                        received += int(v.number(o.get("value")))
+                    elif not to and a:
+                        to = a
+                stt = tx.get("status") or {}
+                ok = bool(stt.get("confirmed"))
+                delta = (received - spent) / 1e8
+                out.append(
+                    Transfer(
+                        w.chain,
+                        str(tx["txid"])[:80],
+                        int(stt.get("block_time", 0)) if ok else 0,
+                        "ok" if ok else "pending",
+                        [Leg(coin.id, coin.symbol, delta)],
+                        v.number(tx.get("fee", 0)) / 1e8 if spent else None,
+                        coin.symbol,
+                        True,
+                        to if delta < 0 else frm,
+                    )
+                )
+            except _RETRYABLE:
+                continue
+        out.sort(key=lambda t: (t.ts != 0, -t.ts))
+        return out[:50]
 
     # ── Ethereum: Blockscout ────────────────────────────────────────────────
     async def _blockscout_balance(self, w: Wallet) -> WalletBalance:

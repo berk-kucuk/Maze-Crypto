@@ -158,6 +158,7 @@ class HoldingsPage(Page):
         self.wal_total = label("", "Strong")
         wrow.addWidget(self.wal_total, 1)
         wrow.addWidget(button(t("wal.refresh"), "", self._refresh_wallets, icon_name="ph.arrows-clockwise"))
+        wrow.addWidget(button("Ledger", "", self._ledger, icon_name="ph.usb"))
         wrow.addWidget(button(t("wal.add"), "Primary", self.add_wallet, icon_name="ph.plus"))
         wl.addLayout(wrow)
         self.wal = _table([t("wal.name"), t("wal.network"), t("wal.address"), t("wal.assets"), t("hold.value"),
@@ -416,6 +417,11 @@ class HoldingsPage(Page):
     def _refresh_wallets(self) -> None:
         for w in self.ctl.wallets():
             self.ctl.refresh_wallet(w.id)
+
+    def _ledger(self) -> None:
+        from mazecrypto.ui.dialogs.ledger_dialog import LedgerDialog
+
+        LedgerDialog(self.ctl, self).exec()
 
     def add_wallet(self, coin=None) -> None:
         from mazecrypto.ui.dialogs.wallet_editor import WalletDialog

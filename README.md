@@ -69,7 +69,24 @@ model is instructed not to give buy/sell recommendations or price forecasts.
   coin. Bitcoin, Litecoin, Ethereum (+ Base, Arbitrum, Optimism, Polygon),
   Hyperliquid (spot, perp margin, staked HYPE and HyperEVM), Solana and TRON are
   read from the blockchain — balances, known tokens (USDT, USDC, …) and recent
-  transfers; Monero and anything else take a balance you enter. Wallet amounts
+  transfers; anything else takes a balance you enter.
+- **HD accounts (xpub / ypub / zpub / Ltub)** — paste an account key and every
+  receive and change address of the account is followed (gap limit 20 / 10, as
+  Ledger Live does), so the whole balance is seen, not one address
+- **Ledger** (Portfolio → Wallets → Ledger) — plug in a Ledger, tick every coin
+  you want (BTC, ETH and its networks, SOL, TRX, XMR, LTC) and the app opens
+  each coin's app on the device in turn and reads Ledger Live's accounts —
+  public keys only; there is no command that signs. "Verify" shows the account
+  on the device screen. Talks to the device through Linux hidraw (needs
+  `ledger-udev`); no Ledger Live, no extra library
+- **Monero view-only** — the primary address and the private *view* key
+  (typed, or exported by a Ledger). Blocks come from community onion nodes over
+  Tor and the outputs are found on this computer (libsodium); the node never
+  sees the key. No start date is needed: recent payments show up first and the
+  history is then read backwards (stop it whenever the balance is complete); a
+  date only makes the first scan shorter. Spends are recognised by the change they return — a send of the
+  whole balance without change is not seen. The key is kept in the desktop
+  keyring (KWallet / GNOME Keyring) Wallet amounts
   become the portfolio's amounts; recorded trades still give the average cost
   and profit/loss. Each chain has several public providers, tried in turn until
   one answers. Only public addresses: recovery phrases, private keys and xprv
@@ -133,7 +150,10 @@ skipped, and when none answers the wallet keeps its last balance, marked stale.
   it before you save.
 - Trades, watched addresses and settings stay on your disk:
   `~/.config/maze-crypto/config.toml` and `~/.local/share/maze-crypto/profiles/`.
-- **Wallets:** only public addresses. Recovery phrases, private keys and xprv
+- **Monero only over Tor:** Settings → Tor & Monero (default `127.0.0.1:9050`,
+  the tor service). With Tor down nothing is sent; onion nodes by default, a
+  clearnet node only over HTTPS after check.torproject.org confirms Tor.
+- **Wallets:** only public information (addresses, account keys, Monero view keys). Recovery phrases, private keys and xprv
   are recognised, refused and wiped from the clipboard. Reading a balance sends
   the address to that chain's public explorer, which can link it to your IP —
   use the proxy to keep it out.

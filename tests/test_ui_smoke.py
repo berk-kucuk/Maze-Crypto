@@ -106,8 +106,25 @@ def test_pages_and_dialogs(app, tmp_path, monkeypatch):
             assert wd.addr.text() == ""
             assert not wd.validate() and not ctl.wallets()
             xmr = "888tNkZrPN6JsEgekjMnABU4TBzc2Dt29EPAvkRxbANsAnjyPbb3iQ1YBRk1UXcdRsiKc9dhwMVgN5S9cQUiyoogDavup3H"
-            wd.addr.setText(xmr)                             # a Monero address switches to the manual form
-            assert wd.mode.current() == "manual"
+            wd.addr.setText(xmr)                             # a Monero address switches to the view-only form
+            assert wd.mode.current() == "monero" and wd.xmr_addr.text() == xmr
+            vw = WalletDialog(ctl)
+            put: dict = {}
+            ctl.monero.keys.put = lambda wid, k: put.__setitem__(wid, k)   # keep the test key out of the keyring
+            vw.mode.set("monero")
+            vw._mode_changed()
+            vw.xmr_addr.setText("41jV8SmnZa2KwmkeSV5U7p8rdTtbbqLZfCfYFuUdEo44JT9uxEPAqP85xccmqnGArkLXzrGEzfp3aiViwfUg5e8GLX6LqU9")
+            vw.restore.setText("2026-10-01")
+            vw.view_key.setText("fb70e56298e51aede6b715b6fdc09c80a2f71b1ae3b542374bcb61eaa0cba008")   # the spend key
+            assert not vw.validate() and vw.view_key.text() == "" and not put
+            vw.view_key.setText("d41d25229ad2ea1c8d24fba56fa38a482259399b8adb73195c65b2fc8f6d6407")
+            assert vw.validate() and len(put) == 1
+            assert [w.monero_view for w in ctl.wallets()] == [True]
+            ctl.delete_wallet(ctl.wallets()[0].id)
+            wd.mode.set("manual")
+            wd._mode_changed()
+            wd.addr.setText(xmr)
+            wd._select_coin(Coin("monero", "XMR", "Monero"))
             wd.amount.setText("2.5")
             assert wd.validate()
             assert [w.chain for w in ctl.wallets()] == ["monero"]

@@ -1,9 +1,9 @@
 """Watched wallet addresses, read-only, and how they feed the portfolio.
 
-Nothing here can sign or move funds: there is no key material anywhere in
-the app. Two chains have no public balance lookup and take the amount from
-the user instead: ``monero`` (balances are private by design) and ``manual``
-(any coin — an exchange account, a coin without a supported explorer).
+Nothing here can sign or move funds: there is no spending key anywhere in the
+app. ``manual`` wallets (any coin — an exchange account, a coin without a
+supported explorer) take the amount from the user; so does ``monero`` unless
+it is a view-only wallet, which is scanned over Tor (see providers/monero.py).
 """
 
 from __future__ import annotations
@@ -29,10 +29,25 @@ class Wallet:
     amount: float | None = None  # manual / monero: the entered balance
     in_portfolio: bool = True  # False = watch only (someone else's address …)
     created: int = 0
+    # Bitcoin/Litecoin HD account: ``address`` is the account key, ``script`` the addresses it makes.
+    script: str = ""
+    path: str = ""  # derivation path on its device, e.g. m/84'/0'/0' (informational)
+    device: str = ""  # "ledger" when read from a Ledger
+    # Monero: a view-only wallet scanned over Tor (the view key is in the keyring, never here).
+    view: bool = False
+    restore_height: int = 0
 
     @property
     def manual(self) -> bool:
-        return self.chain in MANUAL_CHAINS
+        return self.chain == "manual" or (self.chain == "monero" and not self.view)
+
+    @property
+    def account(self) -> bool:
+        return bool(self.script) and self.chain in ("bitcoin", "litecoin")
+
+    @property
+    def monero_view(self) -> bool:
+        return self.chain == "monero" and self.view
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -51,6 +66,11 @@ class Wallet:
             None if amount is None else float(amount),
             bool(d.get("in_portfolio", True)),
             int(d.get("created", 0)),
+            str(d.get("script", "")),
+            str(d.get("path", "")),
+            str(d.get("device", "")),
+            bool(d.get("view", False)),
+            int(d.get("restore_height", 0)),
         )
 
 

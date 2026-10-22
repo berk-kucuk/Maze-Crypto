@@ -34,6 +34,7 @@ from mazecrypto.core.store import Cache, ProfileStore
 from mazecrypto.core.wallet import Transfer, Wallet, WalletBalance, is_synthetic, merge_activity, merge_wallets
 from mazecrypto.providers import wallets as wallets_mod
 from mazecrypto.providers.ai import AiUnavailable, LocalAI
+from mazecrypto.providers.monero import MoneroSync
 from mazecrypto.providers.service import MarketService, Snapshot
 from mazecrypto.ui import fmt
 from mazecrypto.ui.notify import Notifier
@@ -74,6 +75,7 @@ class Controller(QObject):
         # Last balance of every watched address, by wallet id: (balance or None, stale age, error).
         self.wallet_data: dict[str, tuple[WalletBalance | None, float | None, str | None]] = {}
         self.wallet_loading: set[str] = set()
+        self.monero = MoneroSync(cfg.data_dir() / "profiles" / settings.profile)
         self._tasks: set[asyncio.Task] = set()
         self._refreshing = False
         self.timer = QTimer(self)
@@ -266,15 +268,50 @@ class Controller(QObject):
 
     async def _refresh_wallets(self, cache_only: bool = False) -> None:
         """Every watched address at once; one that fails keeps its last balance, marked stale."""
-        lst = [w for w in self.wallets() if not w.manual]
-        if not lst:
+        lst = [w for w in self.wallets() if not w.manual and not w.monero_view]
+        xmr = [w for w in self.wallets() if w.monero_view]
+        for w in xmr:  # what the last scan found; the scan itself runs in the background (it can be long)
+            prev = self.wallet_data.get(w.id, (None, None, None))
+            self.wallet_data[w.id] = (self.monero.balance(w), None, prev[2])
+        if lst:
+            await asyncio.gather(*(self._fetch_wallet(w, cache_only) for w in lst))
+        if lst or xmr:
+            self.walletsChanged.emit()
+        if xmr and not cache_only:
+            self.sync_monero(force=False)
+
+    def sync_monero(self, force: bool) -> None:
+        """Scan the view-only Monero wallets over Tor; balances update after every batch of blocks."""
+        xmr = [w for w in self.wallets() if w.monero_view]
+        if not xmr:
             return
-        await asyncio.gather(*(self._fetch_wallet(w, cache_only) for w in lst))
-        self.walletsChanged.emit()
+
+        def update(w: Wallet, err: str | None) -> None:
+            msg = i18n.t("xmr.err_" + err[4:]) if err and err.startswith("tor:") else err
+            self.wallet_data[w.id] = (self.monero.balance(w), None, msg)
+            if w.id not in self.monero.progress:
+                self.wallet_loading.discard(w.id)
+            self.walletsChanged.emit()
+
+        async def go() -> None:
+            for w in xmr:
+                self.wallet_loading.add(w.id)
+            self.walletsChanged.emit()
+            try:
+                await self.monero.sync_all(xmr, self.settings, force, update)
+            finally:
+                for w in xmr:
+                    self.wallet_loading.discard(w.id)
+                self._after_wallet_change()
+
+        self.run(go())
 
     def refresh_wallet(self, wallet_id: str) -> None:
         w = next((x for x in self.wallets() if x.id == wallet_id), None)
         if w is None or w.manual:
+            return
+        if w.monero_view:
+            self.sync_monero(force=True)
             return
 
         async def go() -> None:
@@ -317,6 +354,8 @@ class Controller(QObject):
         self._after_wallet_change()
 
     def delete_wallet(self, wallet_id: str) -> None:
+        if any(x.id == wallet_id and x.monero_view for x in self.wallets()):
+            self.monero.forget(wallet_id)
         self._save_wallets([x for x in self.wallets() if x.id != wallet_id])
         self.walletsChanged.emit()
         self.portfolioChanged.emit()
@@ -355,6 +394,8 @@ class Controller(QObject):
         errors: list[str] = []
 
         async def one(w: Wallet) -> list[Transfer]:
+            if w.monero_view:
+                return self.monero.activity(w)
             try:
                 f = await self.service.wallets.activity(w)
             except Exception as e:  # noqa: BLE001
@@ -392,6 +433,7 @@ class Controller(QObject):
         if profile_changed:
             self.store.close()
             self.store = ProfileStore(cfg.data_dir() / "profiles" / f"{new.profile}.db")
+            self.monero = MoneroSync(cfg.data_dir() / "profiles" / new.profile)
             self.wallet_data = {}
             self.portfolioChanged.emit()
         self.timer.setInterval(new.refresh_seconds * 1000)

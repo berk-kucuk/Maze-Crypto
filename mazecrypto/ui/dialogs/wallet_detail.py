@@ -113,6 +113,9 @@ class WalletDetailDialog(Dialog):
 
         self.head = label("", "Mid", wrap=True)
         self.content.addWidget(self.head)
+        self.extra = label("", "Small", wrap=True)
+        self.extra.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.content.addWidget(self.extra)
         if wallet.address:
             a = label(wallet.address, "Mono")
             a.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
@@ -120,13 +123,16 @@ class WalletDetailDialog(Dialog):
         row = QHBoxLayout()
         if wallet.address:
             row.addWidget(button(t("wal.copy"), "", self._copy, icon_name="ph.copy"))
-        url = chains.explorer_url(wallet.chain, wallet.address) if wallet.address else None
+        url = chains.explorer_url(wallet.chain, wallet.address) if wallet.address and not wallet.account else None
         if url:
             row.addWidget(button(t("wal.explorer"), "", lambda: open_url(url), icon_name="ph.arrow-square-out"))
         if not wallet.manual:
             row.addWidget(
                 button(t("wal.refresh"), "", lambda: ctl.refresh_wallet(wallet.id), icon_name="ph.arrows-clockwise")
             )
+        self.hist_btn = button("", "Link", self._history)
+        self.hist_btn.hide()
+        row.addWidget(self.hist_btn)
         row.addWidget(button(t("btn.edit"), "", self._edit, icon_name="ph.pencil-simple"))
         row.addWidget(button(t("btn.delete"), "", self._delete, icon_name="ph.trash"))
         row.addStretch()
@@ -145,7 +151,7 @@ class WalletDetailDialog(Dialog):
         self.act = table(activity_headers())
         self.act.cellDoubleClicked.connect(lambda r, _c: open_url(self.act.item(r, 0).data(Qt.ItemDataRole.UserRole)))
         self.content.addWidget(self.act, 1)
-        if wallet.chain == "monero":
+        if wallet.chain == "monero" and wallet.manual:
             self.act_note.setText(t("wal.xmr_note"))
             self.act.hide()
         elif wallet.manual:
@@ -183,6 +189,47 @@ class WalletDetailDialog(Dialog):
         elif err:
             bits.append(t("wal.err_stale", err=err) if bal else t("wal.err_fetch", err=err))
         self.head.setText("  ·  ".join(bits))
+        extra = []
+        if w.device == "ledger":
+            extra.append("Ledger")
+        if w.account:
+            extra.append(t("wal.script_" + w.script.replace("-", "_")))
+            if w.path:
+                extra.append(f"{t('wal.path')}: {w.path}")
+            info2 = self.ctl.service.wallets.account_info(w)
+            if info2:
+                nxt, used = info2
+                extra.append(t("wal.used_addresses") + f": {used}")
+                if nxt:
+                    extra.append(f"{t('wal.next_address')}: <tt>{nxt}</tt>")
+        if w.monero_view:
+            prog = self.ctl.monero.progress.get(w.id)
+            st = self.ctl.monero.state(w.id)
+            if prog and prog.phase == "back":
+                extra.append(t("xmr.history_running", date=fmt.date(prog.ts)))
+            elif prog:
+                extra.append(t("xmr.scanning_long", h=prog.height, tip=prog.tip) + f" ({int(prog.fraction * 100)}%)")
+            elif st and st.next:
+                extra.append(f"{t('xmr.scanned_to')}: {st.next}")
+            self.hist_btn.hide()
+            if w.restore_height > 0:
+                extra.append(f"{t('xmr.restore_height')}: {w.restore_height}")
+            elif st and st.low:
+                # No start date: history is read backwards from the day the wallet was added.
+                n = len(st.outputs)
+                if st.back_done and st.floor > 1:
+                    extra.append(t("xmr.history_stopped", date=fmt.date(st.low_ts), n=n))
+                    self.hist_btn.setText(t("xmr.history_resume"))
+                    self.hist_btn.show()
+                elif st.back_done:
+                    extra.append(t("xmr.history_done", n=n))
+                else:
+                    extra.append(t("xmr.history_so_far", date=fmt.date(st.low_ts), n=n))
+                    self.hist_btn.setText(t("xmr.history_stop"))
+                    self.hist_btn.show()
+            extra.append(t("xmr.view_b"))
+        self.extra.setText("<br>".join(extra))
+        self.extra.setVisible(bool(extra))
         rows = (
             [(w.coin_id, w.symbol, w.amount or 0.0, "")]
             if w.manual
@@ -240,6 +287,14 @@ class WalletDetailDialog(Dialog):
         self.ctl.run(
             self.ctl.wallet_activity([self.w.id]), done, lambda _e: self.act_note.setText(t("wal.history_failed"))
         )
+
+    def _history(self) -> None:
+        st = self.ctl.monero.state(self.w.id)
+        resume = bool(st and st.back_done)
+        self.ctl.monero.set_history(self.w.id, resume)
+        if resume:
+            self.ctl.sync_monero(force=True)
+        self._render()
 
     def _copy(self) -> None:
         cb = QGuiApplication.clipboard()

@@ -70,6 +70,10 @@ class Settings:
     ai_enabled: bool = True           # local Ollama assistant, shown only when Ollama runs
     ai_model: str = ""                # "" = Maze-AI's model, else the first one installed
     proxy: ProxySettings = field(default_factory=ProxySettings)
+    # Monero always goes through Tor: this SOCKS5 port (the tor service, or Tor Browser on 9150).
+    tor_host: str = "127.0.0.1"
+    tor_port: int = 9050
+    monero_node: str = ""             # host:port, an .onion or https://…; "" = Maze's onion nodes
 
     def validate(self) -> None:
         if self.language not in LANGUAGES:
@@ -88,6 +92,11 @@ class Settings:
         if not PROFILE_RE.match(self.profile):
             raise ValueError("profile name")
         self.proxy.validate()
+        if not 1 <= int(self.tor_port) <= 65535:
+            self.tor_port = 9050
+        if not self.tor_host.strip() or any(c.isspace() or c == "/" for c in self.tor_host) or len(self.tor_host) > 253:
+            self.tor_host = "127.0.0.1"
+        self.monero_node = self.monero_node.strip()[:200]
         seen: set[str] = set()
         self.watchlist = [c for c in self.watchlist if not (c.id in seen or seen.add(c.id))]
 
@@ -99,6 +108,7 @@ class Settings:
             "profile": self.profile, "onboarded": self.onboarded, "expert": self.expert, "accent": self.accent,
             "ai_enabled": self.ai_enabled, "ai_model": self.ai_model,
             "proxy": {"enabled": self.proxy.enabled, "url": self.proxy.url},
+            "tor": {"host": self.tor_host, "port": self.tor_port}, "monero_node": self.monero_node,
             "watchlist": [c.to_dict() for c in self.watchlist],
         }
 
@@ -113,6 +123,13 @@ class Settings:
             s.exchanges = [str(x) for x in d["exchanges"]]
         p = d.get("proxy") or {}
         s.proxy = ProxySettings(bool(p.get("enabled", False)), str(p.get("url", s.proxy.url)))
+        tor = d.get("tor") or {}
+        s.tor_host = str(tor.get("host", s.tor_host))
+        try:
+            s.tor_port = int(tor.get("port", s.tor_port))
+        except (TypeError, ValueError):
+            s.tor_port = 9050
+        s.monero_node = str(d.get("monero_node", ""))
         wl = []
         for c in d.get("watchlist") or []:
             try:

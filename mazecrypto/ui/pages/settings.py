@@ -181,6 +181,25 @@ class SettingsPage(Page):
             f.addRow(key(t("set.proxy_url")), row)
             f.addRow(self.proxy_status)
 
+        # ── Tor & Monero (always: Monero never goes without Tor) ──
+        f = card(t("tor.title"), t("tor.help"))
+        self.tor_host = QLineEdit()
+        self.tor_host.setPlaceholderText("127.0.0.1")
+        self.tor_port = QSpinBox()
+        self.tor_port.setRange(1, 65535)
+        self.xmr_node = QLineEdit()
+        self.xmr_node.setPlaceholderText(t("tor.node_auto"))
+        self.tor_status = label("", "Small", wrap=True)
+        row = QHBoxLayout()
+        row.addWidget(self.tor_host, 1)
+        row.addWidget(label(":", "Mid"))
+        row.addWidget(self.tor_port)
+        row.addWidget(button(t("set.test"), "", self._test_tor))
+        f.addRow(key(t("tor.address")), row)
+        f.addRow(key(t("tor.node")), self.xmr_node)
+        f.addRow(label(t("tor.node_help"), "Small", wrap=True))
+        f.addRow(self.tor_status)
+
         f = card(t("set.data"))
         if expert:
             f.addRow(key(t("set.profile")), self.profile)
@@ -242,6 +261,9 @@ class SettingsPage(Page):
                 w.setParent(None)
         self.ex = exchange_list(s.exchanges)
         self.ex_holder.addWidget(self.ex)
+        self.tor_host.setText(s.tor_host)
+        self.tor_port.setValue(s.tor_port)
+        self.xmr_node.setText(s.monero_node)
         self.proxy_on.setChecked(s.proxy.enabled)
         self.proxy_url.setText(s.proxy.url)
         self.profile.clear()
@@ -265,7 +287,9 @@ class SettingsPage(Page):
                     ai_model=(self.ai_model.currentData() if self.ai_model.currentIndex() >= 0 and
                               self.ai_model.currentText() == self.ai_model.itemText(self.ai_model.currentIndex())
                               else self.ai_model.currentText()) or "",
-                    watchlist=list(self.ctl.settings.watchlist))
+                    watchlist=list(self.ctl.settings.watchlist),
+                    tor_host=self.tor_host.text().strip() or "127.0.0.1", tor_port=self.tor_port.value(),
+                    monero_node=self.xmr_node.text().strip())
         try:
             s.validate()
         except ValueError as e:
@@ -283,6 +307,23 @@ class SettingsPage(Page):
         self.ctl.apply_settings(s)
         self.msg.setText(t("set.saved"))
         self.msg.setStyleSheet(f"color: {P['up']};")
+
+    def _test_tor(self) -> None:
+        s = replace(self.ctl.settings, tor_host=self.tor_host.text().strip() or "127.0.0.1",
+                    tor_port=self.tor_port.value(), monero_node=self.xmr_node.text().strip())
+        self.tor_status.setText(t("set.testing"))
+        self.tor_status.setStyleSheet(f"color: {P['muted']};")
+
+        def ok(r: str) -> None:
+            self.tor_status.setText(t("tor.ok", node=r))
+            self.tor_status.setStyleSheet(f"color: {P['up']};")
+
+        def fail(e: Exception) -> None:
+            code = getattr(e, "code", None)
+            self.tor_status.setText(t(f"xmr.err_{code}") if code else t("set.proxy_fail", err=e))
+            self.tor_status.setStyleSheet(f"color: {P['down']};")
+
+        self.ctl.run(self.ctl.monero.test(s), ok, fail)
 
     def _test_proxy(self) -> None:
         url = self.proxy_url.text().strip()
