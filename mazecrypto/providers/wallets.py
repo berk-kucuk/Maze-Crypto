@@ -18,6 +18,7 @@ bait) never appear in the history.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hashlib
 import time
 from collections.abc import Awaitable, Callable
@@ -118,6 +119,142 @@ CHAINS: tuple[ChainInfo, ...] = (
         Coin("avalanche-2", "AVAX", "Avalanche"),
         "https://snowtrace.io/address/{a}",
         "https://snowtrace.io/tx/{t}",
+    ),
+    ChainInfo(
+        "ripple",
+        "XRP Ledger",
+        Coin("ripple", "XRP", "XRP"),
+        "https://livenet.xrpl.org/accounts/{a}",
+        "https://livenet.xrpl.org/transactions/{t}",
+        True,
+    ),
+    ChainInfo(
+        "dogecoin",
+        "Dogecoin",
+        Coin("dogecoin", "DOGE", "Dogecoin"),
+        "https://blockchair.com/dogecoin/address/{a}",
+        "https://blockchair.com/dogecoin/transaction/{t}",
+    ),
+    ChainInfo(
+        "bitcoin-cash",
+        "Bitcoin Cash",
+        Coin("bitcoin-cash", "BCH", "Bitcoin Cash"),
+        "https://blockchair.com/bitcoin-cash/address/{a}",
+        "https://blockchair.com/bitcoin-cash/transaction/{t}",
+    ),
+    ChainInfo(
+        "cardano",
+        "Cardano",
+        Coin("cardano", "ADA", "Cardano"),
+        "https://cardanoscan.io/address/{a}",
+        "https://cardanoscan.io/transaction/{t}",
+    ),
+    ChainInfo(
+        "ton",
+        "TON",
+        Coin("the-open-network", "TON", "Toncoin"),
+        "https://tonviewer.com/{a}",
+        "https://tonviewer.com/transaction/{t}",
+    ),
+    ChainInfo(
+        "stellar",
+        "Stellar",
+        Coin("stellar", "XLM", "Stellar"),
+        "https://stellar.expert/explorer/public/account/{a}",
+        "https://stellar.expert/explorer/public/tx/{t}",
+    ),
+    ChainInfo(
+        "polkadot",
+        "Polkadot",
+        Coin("polkadot", "DOT", "Polkadot"),
+        "https://assethub-polkadot.subscan.io/account/{a}",
+        "https://assethub-polkadot.subscan.io/extrinsic/{t}",
+    ),
+    ChainInfo(
+        "cosmos",
+        "Cosmos Hub",
+        Coin("cosmos", "ATOM", "Cosmos Hub"),
+        "https://www.mintscan.io/cosmos/address/{a}",
+        "https://www.mintscan.io/cosmos/tx/{t}",
+    ),
+    ChainInfo(
+        "near",
+        "NEAR",
+        Coin("near", "NEAR", "NEAR Protocol"),
+        "https://nearblocks.io/address/{a}",
+        "https://nearblocks.io/txns/{t}",
+    ),
+    ChainInfo(
+        "algorand",
+        "Algorand",
+        Coin("algorand", "ALGO", "Algorand"),
+        "https://allo.info/account/{a}",
+        "https://allo.info/tx/{t}",
+    ),
+    ChainInfo("tezos", "Tezos", Coin("tezos", "XTZ", "Tezos"), "https://tzkt.io/{a}", "https://tzkt.io/{t}"),
+    ChainInfo(
+        "kaspa",
+        "Kaspa",
+        Coin("kaspa", "KAS", "Kaspa"),
+        "https://explorer.kaspa.org/addresses/{a}",
+        "https://explorer.kaspa.org/txs/{t}",
+    ),
+    ChainInfo(
+        "dash",
+        "Dash",
+        Coin("dash", "DASH", "Dash"),
+        "https://insight.dash.org/insight/address/{a}",
+        "https://insight.dash.org/insight/tx/{t}",
+    ),
+    ChainInfo(
+        "zcash",
+        "Zcash (transparent)",
+        Coin("zcash", "ZEC", "Zcash"),
+        "https://blockchair.com/zcash/address/{a}",
+        "https://blockchair.com/zcash/transaction/{t}",
+    ),
+    ChainInfo("linea", "Linea", ETH, "https://lineascan.build/address/{a}", "https://lineascan.build/tx/{t}"),
+    ChainInfo(
+        "zksync", "zkSync Era", ETH, "https://era.zksync.network/address/{a}", "https://era.zksync.network/tx/{t}"
+    ),
+    ChainInfo("scroll", "Scroll", ETH, "https://scrollscan.com/address/{a}", "https://scrollscan.com/tx/{t}"),
+    ChainInfo(
+        "mantle",
+        "Mantle",
+        Coin("mantle", "MNT", "Mantle"),
+        "https://mantlescan.xyz/address/{a}",
+        "https://mantlescan.xyz/tx/{t}",
+    ),
+    ChainInfo(
+        "gnosis",
+        "Gnosis",
+        Coin("xdai", "XDAI", "xDAI"),
+        "https://gnosisscan.io/address/{a}",
+        "https://gnosisscan.io/tx/{t}",
+    ),
+    ChainInfo(
+        "sonic",
+        "Sonic",
+        Coin("sonic-3", "S", "Sonic"),
+        "https://sonicscan.org/address/{a}",
+        "https://sonicscan.org/tx/{t}",
+    ),
+    ChainInfo(
+        "cronos",
+        "Cronos",
+        Coin("crypto-com-chain", "CRO", "Cronos"),
+        "https://explorer.cronos.org/address/{a}",
+        "https://explorer.cronos.org/tx/{t}",
+    ),
+    ChainInfo(
+        "celo", "Celo", Coin("celo", "CELO", "Celo"), "https://celoscan.io/address/{a}", "https://celoscan.io/tx/{t}"
+    ),
+    ChainInfo(
+        "ethereum-classic",
+        "Ethereum Classic",
+        Coin("ethereum-classic", "ETC", "Ethereum Classic"),
+        "https://etc.blockscout.com/address/{a}",
+        "https://etc.blockscout.com/tx/{t}",
     ),
     # Monero balances cannot be read from an address — that is the point of Monero. A view-only
     # wallet (address + private view key) is scanned locally over Tor; otherwise the user enters it.
@@ -230,6 +367,15 @@ EVM_RPC = {
         "https://api.avax.network/ext/bc/C/rpc",
         "https://avalanche.drpc.org",
     ),
+    "linea": ("https://linea-rpc.publicnode.com", "https://rpc.linea.build"),
+    "zksync": ("https://mainnet.era.zksync.io", "https://zksync.drpc.org"),
+    "scroll": ("https://scroll-rpc.publicnode.com", "https://rpc.scroll.io"),
+    "mantle": ("https://mantle-rpc.publicnode.com", "https://rpc.mantle.xyz"),
+    "gnosis": ("https://gnosis-rpc.publicnode.com", "https://rpc.gnosischain.com"),
+    "sonic": ("https://sonic-rpc.publicnode.com", "https://rpc.soniclabs.com"),
+    "cronos": ("https://cronos-evm-rpc.publicnode.com", "https://evm.cronos.org"),
+    "celo": ("https://celo-rpc.publicnode.com", "https://forno.celo.org"),
+    "ethereum-classic": ("https://etc.etcdesktop.com", "https://ethereum-classic.drpc.org"),
 }
 EVM_CHAIN_ID = {
     "ethereum": 1,
@@ -239,6 +385,15 @@ EVM_CHAIN_ID = {
     "polygon": 137,
     "bsc": 56,
     "avalanche": 43114,
+    "linea": 59144,
+    "zksync": 324,
+    "scroll": 534352,
+    "mantle": 5000,
+    "gnosis": 100,
+    "sonic": 146,
+    "cronos": 25,
+    "celo": 42220,
+    "ethereum-classic": 61,
 }
 SOLANA_RPC = ("https://api.mainnet-beta.solana.com", "https://solana-rpc.publicnode.com")
 SPL_PROGRAMS = ("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA", "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb")
@@ -246,6 +401,26 @@ JUPITER = "https://lite-api.jup.ag"
 TRONGRID = "https://api.trongrid.io"
 HL_INFO = "https://api.hyperliquid.xyz/info"
 HYPER_EVM = "https://rpc.hyperliquid.xyz/evm"
+XRPL_RPC = ("https://xrplcluster.com", "https://s2.ripple.com:51234", "https://xrpl.ws")
+BLOCKCYPHER = "https://api.blockcypher.com/v1"
+BLOCKCHAIR = "https://api.blockchair.com"
+HASKOIN_BCH = "https://api.blockchain.info/haskoin-store/bch"
+DASH_INSIGHT = "https://insight.dash.org/insight-api"
+KOIOS = "https://api.koios.rest/api/v1"
+TON_API = ("https://toncenter.com/api/v2", "https://tonapi.io/v2")
+HORIZON = "https://horizon.stellar.org"
+# DOT moved to Asset Hub in 2025; what is left on the relay chain is added to it.
+DOT_RPC = (
+    ("https://polkadot-asset-hub-rpc.polkadot.io", "https://asset-hub-polkadot-rpc.n.dwellir.com"),
+    ("https://rpc.polkadot.io", "https://polkadot-rpc.publicnode.com"),
+)
+DOT_ACCOUNT_PREFIX = "26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da9"  # System.Account
+COSMOS_REST = ("https://cosmos-rest.publicnode.com", "https://rest.cosmos.directory/cosmoshub")
+NEAR_RPC = ("https://rpc.mainnet.near.org", "https://free.rpc.fastnear.com")
+ALGOD = "https://mainnet-api.algonode.cloud/v2"
+TZKT = "https://api.tzkt.io/v1"
+KASPA = "https://api.kaspa.org"
+RIPPLE_EPOCH = 946684800
 
 # Hosts and the minimum gap between two requests to each, in seconds.
 HOSTS = {
@@ -279,6 +454,46 @@ HOSTS = {
     "api.trongrid.io": 0.5,
     "api.hyperliquid.xyz": 0.3,
     "rpc.hyperliquid.xyz": 0.3,
+    "xrplcluster.com": 0.3,
+    "s2.ripple.com": 0.3,
+    "xrpl.ws": 0.3,
+    "api.blockcypher.com": 0.5,
+    "api.blockchair.com": 2.0,
+    "api.blockchain.info": 0.5,
+    "insight.dash.org": 0.5,
+    "api.koios.rest": 1.0,
+    "toncenter.com": 1.1,
+    "tonapi.io": 1.0,
+    "horizon.stellar.org": 0.3,
+    "polkadot-asset-hub-rpc.polkadot.io": 0.3,
+    "asset-hub-polkadot-rpc.n.dwellir.com": 0.3,
+    "rpc.polkadot.io": 0.3,
+    "polkadot-rpc.publicnode.com": 0.3,
+    "cosmos-rest.publicnode.com": 0.3,
+    "rest.cosmos.directory": 0.5,
+    "rpc.mainnet.near.org": 0.3,
+    "free.rpc.fastnear.com": 0.3,
+    "mainnet-api.algonode.cloud": 0.3,
+    "api.tzkt.io": 0.3,
+    "api.kaspa.org": 0.5,
+    "linea-rpc.publicnode.com": 0.2,
+    "rpc.linea.build": 0.3,
+    "mainnet.era.zksync.io": 0.3,
+    "zksync.drpc.org": 0.3,
+    "scroll-rpc.publicnode.com": 0.2,
+    "rpc.scroll.io": 0.3,
+    "mantle-rpc.publicnode.com": 0.2,
+    "rpc.mantle.xyz": 0.3,
+    "gnosis-rpc.publicnode.com": 0.2,
+    "rpc.gnosischain.com": 0.3,
+    "sonic-rpc.publicnode.com": 0.2,
+    "rpc.soniclabs.com": 0.3,
+    "cronos-evm-rpc.publicnode.com": 0.2,
+    "evm.cronos.org": 0.3,
+    "celo-rpc.publicnode.com": 0.2,
+    "forno.celo.org": 0.3,
+    "etc.etcdesktop.com": 0.3,
+    "ethereum-classic.drpc.org": 0.3,
 }
 
 TTL_ACTIVITY = 300
@@ -455,6 +670,10 @@ class WalletService:
             return await self._tron_balance(w)
         if c == "hyperliquid":
             return await self._hl_balance(w)
+        if c in SIMPLE_BALANCE:
+            coin = self._native(w)
+            amount = await getattr(self, SIMPLE_BALANCE[c])(w)
+            return WalletBalance([Asset(coin.id, coin.symbol, coin.name, amount)], time.time())
         raise NotSupported(c)
 
     async def _fetch_activity(self, w: Wallet) -> list[Transfer]:
@@ -471,6 +690,8 @@ class WalletService:
             return await self._tron_activity(w)
         if c == "hyperliquid":
             return await self._hl_activity(w)
+        if c == "ripple":
+            return await self._xrp_activity(w)
         return []
 
     @staticmethod
@@ -1191,3 +1412,205 @@ class WalletService:
             except _RETRYABLE:
                 continue
         return out
+
+    # ── Networks read as one native balance ─────────────────────────────────
+    async def _xrpl(self, method: str, params: dict) -> dict:
+        async def call(url: str) -> dict:
+            o = v.mapping(await self.http.post_json(url, {"method": method, "params": [params]}))
+            r = v.mapping(o.get("result"))
+            if r.get("status") == "error" and r.get("error") != "actNotFound":
+                raise NetError(f"xrpl: {str(r.get('error', ''))[:60]}")
+            return r
+
+        return await self._first_ok(XRPL_RPC, call)
+
+    async def _xrp_balance(self, w: Wallet) -> float:
+        r = await self._xrpl("account_info", {"account": w.address, "ledger_index": "validated"})
+        if r.get("error") == "actNotFound":  # never funded
+            return 0.0
+        return units(v.mapping(r.get("account_data")).get("Balance"), 6)
+
+    async def _xrp_activity(self, w: Wallet) -> list[Transfer]:
+        coin = self._native(w)
+        r = await self._xrpl("account_tx", {"account": w.address, "limit": 30, "ledger_index_min": -1})
+        out = []
+        for e in r.get("transactions") or []:
+            try:
+                tx = e.get("tx") or e.get("tx_json") or {}
+                meta = e.get("meta") or {}
+                if tx.get("TransactionType") != "Payment":
+                    continue
+                delivered = meta.get("delivered_amount", tx.get("Amount"))
+                if not isinstance(delivered, str):
+                    continue  # an issued token, not XRP
+                amount = units(delivered, 6)
+                frm, to = tx.get("Account"), tx.get("Destination")
+                if amount <= 0 or frm == to or w.address not in (frm, to):
+                    continue
+                sign = -1.0 if frm == w.address else 1.0
+                ok = meta.get("TransactionResult", "tesSUCCESS") == "tesSUCCESS"
+                out.append(
+                    Transfer(
+                        w.chain,
+                        str(tx.get("hash") or e.get("hash", ""))[:80],
+                        int(tx.get("date", 0)) + RIPPLE_EPOCH if tx.get("date") else 0,
+                        "ok" if ok else "failed",
+                        [Leg(coin.id, coin.symbol, sign * amount)] if ok else [],
+                        fee=units(tx.get("Fee", "0"), 6) if sign < 0 else None,
+                        fee_symbol=coin.symbol,
+                        counterparty=str(to if sign < 0 else frm),
+                    )
+                )
+            except _RETRYABLE:
+                continue
+        return out
+
+    async def _doge_balance(self, w: Wallet) -> float:
+        async def call(base: str) -> float:
+            if base == BLOCKCYPHER:
+                o = v.mapping(await self.http.get_json(f"{BLOCKCYPHER}/doge/main/addrs/{w.address}/balance"))
+                return units(o.get("final_balance"), 8)
+            return await self._blockchair("dogecoin", w.address)
+
+        return await self._first_ok((BLOCKCYPHER, BLOCKCHAIR), call)
+
+    async def _dash_balance(self, w: Wallet) -> float:
+        async def call(base: str) -> float:
+            if base == DASH_INSIGHT:
+                o = v.mapping(await self.http.get_json(f"{DASH_INSIGHT}/addr/{w.address}", {"noTxList": 1}))
+                return units(int(o["balanceSat"]) + int(o.get("unconfirmedBalanceSat") or 0), 8)
+            o = v.mapping(await self.http.get_json(f"{BLOCKCYPHER}/dash/main/addrs/{w.address}/balance"))
+            return units(o.get("final_balance"), 8)
+
+        return await self._first_ok((DASH_INSIGHT, BLOCKCYPHER), call)
+
+    async def _bch_balance(self, w: Wallet) -> float:
+        a = addr.bitcoin_cash_address(w.address)
+
+        async def call(base: str) -> float:
+            if base == HASKOIN_BCH:
+                o = v.mapping(await self.http.get_json(f"{HASKOIN_BCH}/address/{a}/balance"))
+                return units(int(o["confirmed"]) + int(o.get("unconfirmed") or 0), 8)
+            return await self._blockchair("bitcoin-cash", a)
+
+        return await self._first_ok((HASKOIN_BCH, BLOCKCHAIR), call)
+
+    async def _zcash_balance(self, w: Wallet) -> float:
+        return await self._blockchair("zcash", w.address)
+
+    async def _blockchair(self, chain_name: str, a: str) -> float:
+        o = v.mapping(await self.http.get_json(f"{BLOCKCHAIR}/{chain_name}/dashboards/address/{a}", {"limit": 0}))
+        data = v.mapping(o.get("data"))
+        entry = data.get(a) or next(iter(data.values()))
+        return units(v.mapping(entry).get("address", {}).get("balance", 0), 8)
+
+    async def _cardano_balance(self, w: Wallet) -> float:
+        o = v.sequence(await self.http.post_json(f"{KOIOS}/address_info", {"_addresses": [w.address]}))
+        return units(v.mapping(o[0]).get("balance", "0"), 6) if o else 0.0
+
+    async def _ton_balance(self, w: Wallet) -> float:
+        async def call(base: str) -> float:
+            if "toncenter" in base:
+                o = v.mapping(await self.http.get_json(f"{base}/getAddressBalance", {"address": w.address}))
+                if not o.get("ok"):
+                    raise NetError("toncenter: not ok")
+                return units(o.get("result"), 9)
+            o = v.mapping(await self.http.get_json(f"{base}/accounts/{w.address}"))
+            return units(o.get("balance"), 9)
+
+        return await self._first_ok(TON_API, call)
+
+    async def _stellar_balance(self, w: Wallet) -> float:
+        try:
+            o = v.mapping(await self.http.get_json(f"{HORIZON}/accounts/{w.address}"))
+        except HttpError as e:
+            if e.code == 404:  # not funded yet
+                return 0.0
+            raise
+        for b in o.get("balances") or []:
+            if b.get("asset_type") == "native":
+                return float(Decimal(str(b.get("balance"))))
+        return 0.0
+
+    async def _dot_balance(self, w: Wallet) -> float:
+        pub = addr.ss58_public_key(w.address)
+        if pub is None:
+            raise v.ValidationError("polkadot address")
+        key = "0x" + DOT_ACCOUNT_PREFIX + hashlib.blake2b(pub, digest_size=16).hexdigest() + pub.hex()
+
+        async def call(url: str) -> float:
+            o = v.mapping(await self.http.post_json(url, _rpc(1, "state_getStorage", [key])))
+            if o.get("error"):
+                raise NetError("polkadot: rpc error")
+            raw = o.get("result")
+            if not raw:
+                return 0.0  # no account on this chain
+            d = bytes.fromhex(str(raw)[2:])
+            if len(d) < 48:
+                raise v.ValidationError("polkadot: account record")
+            free, reserved = int.from_bytes(d[16:32], "little"), int.from_bytes(d[32:48], "little")
+            return units(free + reserved, 10)
+
+        hub, relay = DOT_RPC
+        total = await self._first_ok(hub, call)
+        with contextlib.suppress(*_RETRYABLE):  # the relay holds little since the migration
+            total += await self._first_ok(relay, call)
+        return total
+
+    async def _cosmos_balance(self, w: Wallet) -> float:
+        async def call(base: str) -> float:
+            bank = v.mapping(await self.http.get_json(f"{base}/cosmos/bank/v1beta1/balances/{w.address}"))
+            n = sum(int(b["amount"]) for b in bank.get("balances") or [] if b.get("denom") == "uatom")
+            st = v.mapping(await self.http.get_json(f"{base}/cosmos/staking/v1beta1/delegations/{w.address}"))
+            for d in st.get("delegation_responses") or []:
+                bal = d.get("balance") or {}
+                if bal.get("denom") == "uatom":
+                    n += int(Decimal(str(bal.get("amount", "0"))))
+            return units(n, 6)
+
+        return await self._first_ok(COSMOS_REST, call)
+
+    async def _near_balance(self, w: Wallet) -> float:
+        body = _rpc(1, "query", {"request_type": "view_account", "finality": "final", "account_id": w.address})
+
+        async def call(url: str) -> float:
+            o = v.mapping(await self.http.post_json(url, body))
+            if o.get("error"):
+                cause = str(((o["error"].get("cause") or {}).get("name")) or "")
+                if cause == "UNKNOWN_ACCOUNT":
+                    return 0.0
+                raise NetError(f"near: {cause[:40]}")
+            r = v.mapping(o.get("result"))
+            return units(int(r["amount"]) + int(r.get("locked") or 0), 24)
+
+        return await self._first_ok(NEAR_RPC, call)
+
+    async def _algorand_balance(self, w: Wallet) -> float:
+        o = v.mapping(await self.http.get_json(f"{ALGOD}/accounts/{w.address}", {"exclude": "all"}))
+        return units(o.get("amount", 0), 6)
+
+    async def _tezos_balance(self, w: Wallet) -> float:
+        return units(await self.http.get_json(f"{TZKT}/accounts/{w.address}/balance"), 6)
+
+    async def _kaspa_balance(self, w: Wallet) -> float:
+        o = v.mapping(await self.http.get_json(f"{KASPA}/addresses/{w.address}/balance"))
+        return units(o.get("balance", 0), 8)
+
+
+# Chains whose balance is one native amount, and the method that reads it.
+SIMPLE_BALANCE = {
+    "ripple": "_xrp_balance",
+    "dogecoin": "_doge_balance",
+    "dash": "_dash_balance",
+    "bitcoin-cash": "_bch_balance",
+    "zcash": "_zcash_balance",
+    "cardano": "_cardano_balance",
+    "ton": "_ton_balance",
+    "stellar": "_stellar_balance",
+    "polkadot": "_dot_balance",
+    "cosmos": "_cosmos_balance",
+    "near": "_near_balance",
+    "algorand": "_algorand_balance",
+    "tezos": "_tezos_balance",
+    "kaspa": "_kaspa_balance",
+}

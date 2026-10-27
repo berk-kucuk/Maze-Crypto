@@ -14,15 +14,73 @@ import re
 from dataclasses import dataclass
 
 # Networks that use Ethereum-style 0x addresses; Hyperliquid (HyperCore + HyperEVM) included.
-EVM_CHAINS = ("ethereum", "base", "arbitrum", "optimism", "polygon", "bsc", "avalanche", "hyperliquid")
+EVM_CHAINS = (
+    "ethereum",
+    "base",
+    "arbitrum",
+    "optimism",
+    "polygon",
+    "bsc",
+    "avalanche",
+    "hyperliquid",
+    "linea",
+    "zksync",
+    "scroll",
+    "mantle",
+    "gnosis",
+    "sonic",
+    "cronos",
+    "celo",
+    "ethereum-classic",
+)
 
-_SCHEMES = {"bitcoin", "litecoin", "ethereum", "solana", "tron", "monero"}
+_SCHEMES = {
+    "bitcoin",
+    "litecoin",
+    "ethereum",
+    "solana",
+    "tron",
+    "monero",
+    "dogecoin",
+    "dash",
+    "zcash",
+    "ripple",
+    "xrpl",
+    "xrp",
+    "cardano",
+    "web+cardano",
+    "ton",
+    "stellar",
+    "web+stellar",
+    "polkadot",
+    "cosmos",
+    "near",
+    "algorand",
+    "tezos",
+}
 _HEX40 = re.compile(r"^0x[0-9a-fA-F]{40}$")
 _HEX64 = re.compile(r"^(0x)?[0-9a-fA-F]{64}$")
 _WORD = re.compile(r"^[a-zA-Z]{2,12}$")
 _XPRV = ("xprv", "yprv", "zprv", "tprv", "uprv", "vprv", "ltpv", "ttpv")
 _XPUB = ("xpub", "ypub", "zpub", "ltub", "mtub")
 _TPUB = ("tpub", "upub", "vpub")
+# Exported private keys of other chains, by their textual prefix.
+_SECRET_PREFIX = (
+    "ed25519:",  # NEAR
+    "secp256k1:",
+    "ed25519_sk",  # Cardano
+    "ed25519e_sk",
+    "addr_xsk",
+    "acct_xsk",
+    "root_xsk",
+    "edsk",  # Tezos
+    "spsk",
+    "p2sk",
+    "suiprivkey",
+)
+_NEAR = re.compile(r"^(?=.{2,64}$)([a-z0-9]+[-_])*[a-z0-9]+(\.([a-z0-9]+[-_])*[a-z0-9]+)*\.(near|tg)$")
+_TON_RAW = re.compile(r"^(0|-1):[0-9a-fA-F]{64}$")
+_B32 = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567"
 
 
 @dataclass(frozen=True, slots=True)
@@ -85,6 +143,14 @@ def secret_kind(text: str) -> str | None:
         return "private_key"
     if s.lower().startswith(_XPRV):
         return "xprv"
+    if s.lower().startswith(_SECRET_PREFIX):
+        return "private_key"
+    if len(s) == 56 and s[0] == "S" and _strkey(s, 18 << 3) is not None:
+        return "private_key"  # a Stellar secret seed
+    if s[:1] == "s" and 25 <= len(s) <= 35:
+        x = b58decode(s, XRP_B58)
+        if x is not None and len(x) == 21 and x[0] == 0x21 and b58check_ok(x):
+            return "private_key"  # an XRP Ledger family seed
     if s.startswith("[") and s.endswith("]"):
         # A Solana keypair exported as a JSON byte array.
         nums = [x.strip() for x in s[1:-1].split(",")]
@@ -92,8 +158,8 @@ def secret_kind(text: str) -> str | None:
             return "private_key"
     b = b58decode(s)
     if b is not None:
-        # WIF private keys (Bitcoin 0x80, Litecoin 0xB0, testnet 0xEF), with a valid checksum.
-        if len(b) in (37, 38) and b58check_ok(b) and b[0] in (0x80, 0xB0, 0xEF):
+        # WIF private keys (Bitcoin 0x80, Litecoin 0xB0, Dogecoin 0x9E, Dash 0xCC, testnet 0xEF).
+        if len(b) in (37, 38) and b58check_ok(b) and b[0] in (0x80, 0xB0, 0x9E, 0xCC, 0xEF):
             return "private_key"
         if len(b) == 64:  # a Solana secret key (seed + public key)
             return "private_key"
@@ -143,6 +209,10 @@ def parse(text: str) -> Result:
     if len(s) in (95, 106) and s[0] in "48" and all(c in B58 for c in s):
         return Ok(s, ("monero",)) if monero_ok(s) else Bad("checksum")
 
+    other = _other_chains(s, lower)
+    if other is not None:
+        return other
+
     b = b58decode(s)
     if b is None:
         return Bad("unknown")
@@ -150,23 +220,91 @@ def parse(text: str) -> Result:
         if not b58check_ok(b):
             return Bad("checksum")
         return {
-            0x00: Ok(s, ("bitcoin",)),
-            0x05: Ok(s, ("bitcoin", "litecoin")),  # P2SH "3…": used by both
+            0x00: Ok(s, ("bitcoin", "bitcoin-cash")),  # legacy "1…": Bitcoin Cash still accepts it
+            0x05: Ok(s, ("bitcoin", "litecoin", "bitcoin-cash")),  # P2SH "3…": used by all three
             0x30: Ok(s, ("litecoin",)),
             0x32: Ok(s, ("litecoin",)),
             0x41: Ok(s, ("tron",)),
+            0x1E: Ok(s, ("dogecoin",)),
+            0x16: Ok(s, ("dogecoin",)),
+            0x4C: Ok(s, ("dash",)),
+            0x10: Ok(s, ("dash",)),
             0x6F: Bad("testnet"),
             0xC4: Bad("testnet"),
             0x3A: Bad("testnet"),
+            0x71: Bad("testnet"),
+            0x8C: Bad("testnet"),
         }.get(b[0], Bad("unknown"))
+    if len(b) == 26 and b[:2] in (b"\x1c\xb8", b"\x1c\xbd"):  # Zcash transparent t1… / t3…
+        return Ok(s, ("zcash",)) if b58check_ok(b) else Bad("checksum")
+    if len(b) == 35 and b[0] == 0 and len(s) in (47, 48):  # Polkadot SS58, network prefix 0 ("1…")
+        return Ok(s, ("polkadot",)) if ss58_ok(b) else Bad("checksum")
     if len(b) == 32 and 32 <= len(s) <= 44:
         return Ok(s, ("solana",))
     return Bad("unknown")
 
 
+def _other_chains(s: str, lower: str) -> Result | None:
+    """Formats with their own prefix or alphabet; None when ``s`` is none of them."""
+    # XRP Ledger: "r…" in Ripple's own base58 alphabet, Base58Check otherwise.
+    if s[0] == "r" and 25 <= len(s) <= 35 and all(c in XRP_B58 for c in s):
+        x = b58decode(s, XRP_B58)
+        if x is not None and len(x) == 25 and x[0] == 0:
+            return Ok(s, ("ripple",)) if b58check_ok(x) else Bad("checksum")
+    if lower.startswith("bitcoincash:") or (len(s) == 42 and lower[0] in "qp" and s in (lower, s.upper())):
+        a = lower if lower.startswith("bitcoincash:") else "bitcoincash:" + lower
+        if s != lower and s != s.upper():
+            return Bad("checksum")
+        return Ok(a, ("bitcoin-cash",)) if cashaddr_ok(a) else (Bad("checksum") if ":" in s else None)
+    if lower.startswith("kaspatest:"):
+        return Bad("testnet")
+    if lower.startswith("kaspa:"):
+        return Ok(lower, ("kaspa",)) if s == lower and cashaddr_ok(lower) else Bad("checksum")
+    if lower.startswith(("addr_test1", "stake_test1")):
+        return Bad("testnet")
+    if lower.startswith("addr1"):
+        d = bech32_decode(s, "addr", max_len=200)
+        return Ok(lower, ("cardano",)) if d is not None and len(d) >= 29 else Bad("checksum")
+    if lower.startswith("cosmos1"):
+        d = bech32_decode(s, "cosmos")
+        return Ok(lower, ("cosmos",)) if d is not None and len(d) in (20, 32) else Bad("checksum")
+    if _NEAR.match(s):
+        return Ok(s, ("near",))
+    if lower.startswith(("tz1", "tz2", "tz3", "tz4", "kt1")) and len(s) == 36:
+        x = b58decode(s)
+        if x is None or len(x) != 27 or not b58check_ok(x):
+            return Bad("checksum")
+        return Ok(s, ("tezos",)) if x[:3].hex() in _TEZOS_PREFIX else Bad("unknown")
+    if len(s) == 56 and s[0] == "G" and all(c in _B32 for c in s):
+        return Ok(s, ("stellar",)) if _strkey(s, 6 << 3) is not None else Bad("checksum")
+    if len(s) == 58 and all(c in _B32 for c in s):
+        return Ok(s, ("algorand",)) if algorand_ok(s) else Bad("checksum")
+    if _TON_RAW.match(s):
+        return Ok(s.lower(), ("ton",))
+    if len(s) == 48 and s[:2] in ("EQ", "UQ", "Ef", "Uf", "kQ", "0Q", "kf", "0f"):
+        t = ton_decode(s)
+        if t is None:
+            return Bad("checksum")
+        return Bad("testnet") if t & 0x80 else Ok(s, ("ton",))
+    return None
+
+
+def bitcoin_cash_address(address: str) -> str:
+    """A Bitcoin Cash address as its explorers want it: cashaddr, also for a legacy 1…/3… address."""
+    if address.startswith("bitcoincash:"):
+        return address
+    b = b58decode(address)
+    if b is None or len(b) != 25:
+        return address
+    version = {0x00: 0, 0x05: 8}.get(b[0])
+    return address if version is None else cashaddr_encode("bitcoincash", version, b[1:21])
+
+
 def key(chain: str, address: str) -> str:
     """The same address in a form that compares equal however it was typed."""
-    if chain in EVM_CHAINS or address.lower().startswith(("bc1", "ltc1")):
+    if chain == "bitcoin-cash":
+        return f"{chain}:{bitcoin_cash_address(address)}"
+    if chain in EVM_CHAINS or chain == "ton" or address.lower().startswith(("bc1", "ltc1")):
         return f"{chain}:{address.lower()}"
     return f"{chain}:{address}"
 
@@ -215,19 +353,22 @@ def tron_from_hex(hex_addr: str) -> str | None:
 # ── Base58 ─────────────────────────────────────────────────────────────────
 
 B58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
+XRP_B58 = "rpshnaf39wBUDNEGHJKLM4PQRST7VWXYZ2bcdeCg65jkm8oFqi1tuvAxyz"
 _B58_INDEX = {c: i for i, c in enumerate(B58)}
+_XRP_INDEX = {c: i for i, c in enumerate(XRP_B58)}
 
 
-def b58decode(s: str) -> bytes | None:
+def b58decode(s: str, alphabet: str = B58) -> bytes | None:
     if not s or len(s) > 120:
         return None
+    index = _XRP_INDEX if alphabet == XRP_B58 else _B58_INDEX
     n = 0
     for c in s:
-        d = _B58_INDEX.get(c)
+        d = index.get(c)
         if d is None:
             return None
         n = n * 58 + d
-    zeros = len(s) - len(s.lstrip("1"))
+    zeros = len(s) - len(s.lstrip(alphabet[0]))
     body = n.to_bytes((n.bit_length() + 7) // 8, "big") if n else b""
     return b"\0" * zeros + body
 
@@ -289,6 +430,125 @@ def b58encode_monero(data: bytes) -> str:
     return "".join(out)
 
 
+# ── Polkadot SS58 / Tezos / Stellar / Algorand / TON ───────────────────────
+
+_TEZOS_PREFIX = {"06a19f", "06a1a1", "06a1a4", "06a1a6", "025a79"}  # tz1 tz2 tz3 tz4 KT1
+
+
+def ss58_ok(b: bytes) -> bool:
+    """One-byte network prefix + 32-byte key + 2 bytes of BLAKE2b-512("SS58PRE" ‖ data)."""
+    return len(b) == 35 and hashlib.blake2b(b"SS58PRE" + b[:33], digest_size=64).digest()[:2] == b[33:]
+
+
+def ss58_public_key(address: str) -> bytes | None:
+    b = b58decode(address)
+    return b[1:33] if b is not None and ss58_ok(b) else None
+
+
+def _crc16_xmodem(data: bytes) -> int:
+    crc = 0
+    for byte in data:
+        crc ^= byte << 8
+        for _ in range(8):
+            crc = ((crc << 1) ^ 0x1021) if crc & 0x8000 else crc << 1
+            crc &= 0xFFFF
+    return crc
+
+
+def _b32decode(s: str) -> bytes | None:
+    acc = bits = 0
+    out = bytearray()
+    for c in s:
+        d = _B32.find(c)
+        if d < 0:
+            return None
+        acc = (acc << 5) | d
+        bits += 5
+        if bits >= 8:
+            bits -= 8
+            out.append((acc >> bits) & 0xFF)
+    return bytes(out)
+
+
+def _strkey(s: str, version: int) -> bytes | None:
+    """A Stellar key (G… account, S… seed): version byte, 32 bytes, CRC16-XModem little-endian."""
+    b = _b32decode(s)
+    if b is None or len(b) != 35 or b[0] != version:
+        return None
+    return b[1:33] if _crc16_xmodem(b[:33]).to_bytes(2, "little") == b[33:] else None
+
+
+def algorand_ok(s: str) -> bool:
+    b = _b32decode(s)
+    return b is not None and len(b) == 36 and hashlib.new("sha512_256", b[:32]).digest()[-4:] == b[32:]
+
+
+def ton_decode(s: str) -> int | None:
+    """The flag byte of a user-friendly TON address (bounceable 0x11 / 0x51, +0x80 testnet), if valid."""
+    import base64
+
+    try:
+        b = base64.urlsafe_b64decode(s.replace("+", "-").replace("/", "_"))
+    except ValueError:
+        return None
+    if len(b) != 36 or b[0] & 0x7F not in (0x11, 0x51) or b[1] not in (0x00, 0xFF):
+        return None
+    return b[0] if _crc16_xmodem(b[:34]).to_bytes(2, "big") == b[34:] else None
+
+
+# ── cashaddr (Bitcoin Cash, Kaspa) ─────────────────────────────────────────
+
+
+def _cash_polymod(values: list[int]) -> int:
+    c = 1
+    for d in values:
+        c0 = c >> 35
+        c = ((c & 0x07FFFFFFFF) << 5) ^ d
+        if c0 & 0x01:
+            c ^= 0x98F2BC8E61
+        if c0 & 0x02:
+            c ^= 0x79B76D99E2
+        if c0 & 0x04:
+            c ^= 0xF33E5FB3C4
+        if c0 & 0x08:
+            c ^= 0xAE2EABE2A8
+        if c0 & 0x10:
+            c ^= 0x1E4F43E470
+    return c ^ 1
+
+
+def cashaddr_ok(addr: str) -> bool:
+    """A lowercase ``prefix:payload`` address with a valid 40-bit cashaddr checksum."""
+    prefix, sep, payload = addr.partition(":")
+    if not sep or len(payload) < 9:
+        return False
+    data = [_CHARSET.find(c) for c in payload]
+    if any(d < 0 for d in data):
+        return False
+    return _cash_polymod([ord(c) & 31 for c in prefix] + [0] + data) == 0
+
+
+def cashaddr_encode(prefix: str, version: int, payload: bytes) -> str:
+    data = _convertbits(bytes([version]) + payload, 8, 5, True)
+    chk = _cash_polymod([ord(c) & 31 for c in prefix] + [0] + data + [0] * 8)
+    data += [(chk >> 5 * (7 - i)) & 31 for i in range(8)]
+    return prefix + ":" + "".join(_CHARSET[d] for d in data)
+
+
+def _convertbits(data: bytes | list[int], frm: int, to: int, pad: bool) -> list[int]:
+    acc = bits = 0
+    out = []
+    for v in data:
+        acc = (acc << frm) | v
+        bits += frm
+        while bits >= to:
+            bits -= to
+            out.append((acc >> bits) & ((1 << to) - 1))
+    if pad and bits:
+        out.append((acc << (to - bits)) & ((1 << to) - 1))
+    return out
+
+
 # ── bech32 / bech32m ───────────────────────────────────────────────────────
 
 _CHARSET = "qpzry9x8gf2tvdw0s3jn54khce6mua7l"
@@ -305,6 +565,23 @@ def _polymod(values: list[int]) -> int:
             if (top >> i) & 1:
                 chk ^= _GEN[i]
     return chk
+
+
+def bech32_decode(addr: str, hrp: str, max_len: int = 90) -> bytes | None:
+    """The data of a plain bech32 address (Cardano, Cosmos), or None if the checksum fails."""
+    if addr != addr.lower() and addr != addr.upper():
+        return None
+    a = addr.lower()
+    pos = a.rfind("1")
+    if a[:pos] != hrp or len(a) > max_len or len(a) - pos - 1 < 6:
+        return None
+    data = [_CHARSET.find(c) for c in a[pos + 1 :]]
+    if any(d < 0 for d in data):
+        return None
+    if _polymod([ord(c) >> 5 for c in hrp] + [0] + [ord(c) & 31 for c in hrp] + data) != 1:
+        return None
+    out = _convertbits(data[:-6], 5, 8, False)
+    return bytes(out)
 
 
 def segwit_ok(addr: str, hrp: str) -> bool:

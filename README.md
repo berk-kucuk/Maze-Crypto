@@ -67,9 +67,13 @@ model is instructed not to give buy/sell recommendations or price forecasts.
   splits new money toward your targets
 - **Wallets** (Portfolio → Wallets) — watch any number of public addresses per
   coin. Bitcoin, Litecoin, Ethereum (+ Base, Arbitrum, Optimism, Polygon),
-  Hyperliquid (spot, perp margin, staked HYPE and HyperEVM), Solana and TRON are
-  read from the blockchain — balances, known tokens (USDT, USDC, …) and recent
-  transfers; anything else takes a balance you enter.
+  Hyperliquid (spot, perp margin, staked HYPE and HyperEVM), Solana, TRON and
+  XRP are read from the blockchain — balances, known tokens (USDT, USDC, …) and
+  recent transfers. Balances are also read on Dogecoin, Bitcoin Cash, Cardano,
+  TON, Stellar, Polkadot (Asset Hub + relay), Cosmos Hub (incl. staked),
+  NEAR (`name.near`), Algorand, Tezos, Kaspa, Dash, Zcash (transparent),
+  BNB Chain, Avalanche, Linea, zkSync Era, Scroll, Mantle, Gnosis, Sonic,
+  Cronos, Celo and Ethereum Classic; anything else takes a balance you enter.
 - **HD accounts (xpub / ypub / zpub / Ltub)** — paste an account key and every
   receive and change address of the account is followed (gap limit 20 / 10, as
   Ledger Live does), so the whole balance is seen, not one address
@@ -129,6 +133,10 @@ All public endpoints, no keys or accounts:
 | Ethereum and EVM wallets | Blockscout (Ethereum: balances, tokens, history), then public nodes — publicnode, 1rpc, drpc and each network's own RPC |
 | Solana wallets | Solana RPC, then publicnode; Jupiter for token names and prices |
 | TRON / Hyperliquid wallets | TronGrid; Hyperliquid's info API and HyperEVM RPC |
+| XRP wallets | XRPL public servers: xrplcluster, s2.ripple.com, xrpl.ws |
+| Dogecoin / Dash / Bitcoin Cash / Zcash | BlockCypher, insight.dash.org, Haskoin (blockchain.info); Blockchair as fallback (Zcash: only source) |
+| Cardano / TON / Stellar / Algorand / Tezos / Kaspa | Koios; toncenter, then tonapi; Horizon; AlgoNode; TzKT; api.kaspa.org |
+| Polkadot / Cosmos / NEAR | Parity and Dwellir RPC (Asset Hub), rpc.polkadot.io; publicnode and cosmos.directory REST; NEAR RPC, then FastNEAR |
 
 **Fallbacks.** A fiat price comes from the first of your exchanges that lists
 the pair, otherwise USD price × exchange rate. An exchange price that disagrees

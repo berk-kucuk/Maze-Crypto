@@ -10,6 +10,7 @@ from mazecrypto.core.models import Trade
 from mazecrypto.core.portfolio import build_positions, summarize
 from mazecrypto.core.store import Cache
 from mazecrypto.core.wallet import Leg, Transfer, Wallet, merge_activity, merge_wallets
+from mazecrypto.providers import wallets
 from mazecrypto.providers.http import Http
 from mazecrypto.providers.service import allowed_hosts
 from mazecrypto.providers.wallets import WalletService
@@ -30,8 +31,8 @@ def test_keccak():
 def test_bitcoin_and_litecoin():
     assert ok("bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh").chains == ("bitcoin",)
     assert ok("BC1QXY2KGDYGJRSQTZQ2N0YRF2493P83KKFJHX0WLH").address == "bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh"
-    assert ok("1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa").chains == ("bitcoin",)
-    assert ok("3KMmeqPeQcngyTehdfSwsGqvxfU7J7qtc8").chains == ("bitcoin", "litecoin")
+    assert ok("1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa").chains == ("bitcoin", "bitcoin-cash")
+    assert ok("3KMmeqPeQcngyTehdfSwsGqvxfU7J7qtc8").chains == ("bitcoin", "litecoin", "bitcoin-cash")
     assert ok("bc1p0xlxvlhemja6c4dqv22uapctqupfhlxm9h8z3k2e72q4k9hcz7vqzk5jj0").chains == ("bitcoin",)  # taproot
     assert ok("bitcoin:bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh?amount=0.1").address.startswith("bc1q")
     assert ok("LcNS6c8RddAMjewDrUAAi8BzecKoosnkN3").chains == ("litecoin",)
@@ -54,10 +55,42 @@ def test_evm_solana_tron_monero():
     assert addr.parse(xmr[:-1] + "J") == addr.Bad("checksum")
 
 
+def test_more_networks():
+    assert ok("rMidom2o9Nv9DsyQQmHv9KhSibK282sn15").chains == ("ripple",)
+    assert addr.parse("rMidom2o9Nv9DsyQQmHv9KhSibK282sn16") == addr.Bad("checksum")
+    assert ok("DH5yaieqoZN36fDVciNyRueRGvGLR3mr7L").chains == ("dogecoin",)
+    assert ok("XpESxaUmonkq8RaLLp46Brx2K39ggQe226").chains == ("dash",)
+    zec = addr.b58encode_check(bytes.fromhex("1cb8") + bytes(20))
+    assert ok(zec).chains == ("zcash",)
+    bch = "bitcoincash:qpm2qsznhks23z7629mms6s4cwef74vcwvy22gdx6a"
+    assert ok(bch).chains == ("bitcoin-cash",) and ok(bch.split(":")[1]).address == bch
+    assert addr.bitcoin_cash_address("1BpEi6DfDAUFd7GtittLSdBeYJvcoaVggu") == bch
+    assert addr.parse(bch[:-1] + "b") == addr.Bad("checksum")
+    kas = "kaspa:qqkqkzjvr7zwxxmjxjkmxxdwju9kjs6e9u82uh59z07vgaks6gg62v8707g73"
+    assert ok(kas).chains == ("kaspa",)
+    ada = "addr1qxy3w62dupy9pzmpdfzxz4k240w5vawyagl5m9djqquyymrtm3grn7gpnjh7rwh2dy62hk8639lt6kzn32yxq960usnq9pexvt"
+    assert ok(ada).chains == ("cardano",)
+    assert ok("cosmos1fl48vsnmsdzcv85q5d2q4z5ajdha8yu34mf0eh").chains == ("cosmos",)
+    assert ok("alice.near").chains == ("near",)
+    assert ok("tz1VSUr8wwNhLAzempoch5d6hLRiTh8Cjcjb").chains == ("tezos",)
+    assert ok("GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN7").chains == ("stellar",)
+    assert ok("737777777777777777777777777777777777777777777777777UFEJ2CI").chains == ("algorand",)
+    assert ok("EQCD39VS5jcptHL8vMjEXrzGaRcCVYto7HUn4bpAOg8xqB2N").chains == ("ton",)
+    assert addr.parse("EQCD39VS5jcptHL8vMjEXrzGaRcCVYto7HUn4bpAOg8xqB2M") == addr.Bad("checksum")
+    assert ok("15oF4uVJwmo4TdGW7VfQxNLavjCXviqxT9S1MgbjMNHr6Sp5").chains == ("polkadot",)
+    assert "ethereum-classic" in ok("0x5aaeb6053f3e94c9b9a09f33669435e7ef1beaed").chains
+    for c in ("ripple", "cardano", "ton", "polkadot", "kaspa", "linea", "celo"):
+        assert wallets.chain(c) is not None and wallets.chains_for_coin(wallets.chain(c).native.id)[0]
+
+
 def test_secrets_are_refused():
     seed = "abandon " * 11 + "about"
     assert addr.parse(seed) == addr.Secret("seed")
     assert addr.parse(seed.replace(" ", "\n")) == addr.Secret("seed")
+    assert addr.parse("snoPBrXtMeMyMHUVTgbuqAfg1SUTb") == addr.Secret("private_key")  # XRP family seed
+    assert addr.parse("SBGWSG6BTNCKCOB3DIFBGCVMUPQFYPA2G4O34RMTB343OYPXU5DJDVMN") == addr.Secret("private_key")
+    near_key = "ed25519:3D4YudUahN1nawWogh8pAKSj92sUNMdbZGjn7kERKzYoTy8tnFQuwoGUC51DowKqorvkr2pytJSnwuSbsNVfqygr"
+    assert addr.parse(near_key) == addr.Secret("private_key")
     key = "4c0883a69102937d6231471b5dbb6204fe5129617082792ae468d01a3f362318"
     assert addr.parse(key) == addr.parse("0x" + key) == addr.Secret("private_key")
     assert addr.parse("5HueCGU8rMjxEXxiPuD5BDku4MkFqeZyd4dZ1jvhTVqvbTLvyTJ") == addr.Secret("private_key")
