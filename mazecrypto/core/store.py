@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 import time
 from collections.abc import Iterator
@@ -34,9 +35,30 @@ CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 """
 
 
+def _private(path: Path) -> None:
+    """Owner-only from the first byte (audit CR2).
+
+    The profile database is what you hold and what you paid; it used to come
+    out with the default umask (0644 in a 0755 directory), readable by every
+    account on the machine. The app's own directories are made 0700 and the
+    file 0600 — tightened on every open, so an older install is fixed too.
+    SQLite gives its -wal and -shm files the main file's permissions.
+    """
+    own = [path.parent]
+    if path.parent.name == "profiles":          # …/maze-crypto/profiles/<name>.db
+        own.append(path.parent.parent)
+    for d in reversed(own):
+        d.mkdir(mode=0o700, parents=True, exist_ok=True)
+        d.chmod(0o700)
+    os.close(os.open(path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600))
+    for f in (path, path.with_name(path.name + "-wal"), path.with_name(path.name + "-shm")):
+        if f.exists():
+            f.chmod(0o600)
+
+
 def _connect(path: Path | str) -> sqlite3.Connection:
     path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
+    _private(path)
     con = sqlite3.connect(path)
     con.execute("PRAGMA journal_mode=WAL")
     con.execute("PRAGMA foreign_keys=ON")

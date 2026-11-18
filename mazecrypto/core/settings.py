@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 import re
+import socket
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -42,10 +43,22 @@ def cache_dir() -> Path:
     return _xdg("XDG_CACHE_HOME", ".cache")
 
 
+def _port_open(host: str, port: int) -> bool:
+    try:
+        with socket.create_connection((host, port), timeout=0.5):
+            return True
+    except OSError:
+        return False
+
+
 @dataclass(slots=True)
 class ProxySettings:
     enabled: bool = False
     url: str = "socks5h://127.0.0.1:9050"   # socks5h: DNS goes through the proxy too
+    # With no proxy set: go through a Tor running on this machine when there is
+    # one. Every watched address and xpub is otherwise looked up from the
+    # user's own IP, which lets each explorer tie all of them to one person.
+    auto_tor: bool = True
 
     def validate(self) -> None:
         u = urlparse(self.url)
@@ -100,6 +113,18 @@ class Settings:
         seen: set[str] = set()
         self.watchlist = [c for c in self.watchlist if not (c.id in seen or seen.add(c.id))]
 
+    def effective_proxy(self, probe=_port_open) -> str | None:
+        """The proxy requests go through: the configured one when it is on;
+        otherwise, with auto_tor, a Tor found on this machine (the Tor set
+        for Monero, then Tor Browser's port); otherwise None — direct."""
+        if self.proxy.enabled:
+            return self.proxy.url
+        if self.proxy.auto_tor:
+            for host, port in ((self.tor_host, int(self.tor_port)), ("127.0.0.1", 9150)):
+                if probe(host, port):
+                    return f"socks5h://{host}:{port}"
+        return None
+
     def to_dict(self) -> dict:
         return {
             "language": self.language, "fiat": self.fiat, "secondary_fiat": self.secondary_fiat,
@@ -107,7 +132,8 @@ class Settings:
             "notifications": self.notifications, "chart_interval": self.chart_interval,
             "profile": self.profile, "onboarded": self.onboarded, "expert": self.expert, "accent": self.accent,
             "ai_enabled": self.ai_enabled, "ai_model": self.ai_model,
-            "proxy": {"enabled": self.proxy.enabled, "url": self.proxy.url},
+            "proxy": {"enabled": self.proxy.enabled, "url": self.proxy.url,
+                      "auto_tor": self.proxy.auto_tor},
             "tor": {"host": self.tor_host, "port": self.tor_port}, "monero_node": self.monero_node,
             "watchlist": [c.to_dict() for c in self.watchlist],
         }
@@ -122,7 +148,8 @@ class Settings:
         if isinstance(d.get("exchanges"), list):
             s.exchanges = [str(x) for x in d["exchanges"]]
         p = d.get("proxy") or {}
-        s.proxy = ProxySettings(bool(p.get("enabled", False)), str(p.get("url", s.proxy.url)))
+        s.proxy = ProxySettings(bool(p.get("enabled", False)), str(p.get("url", s.proxy.url)),
+                                bool(p.get("auto_tor", True)))
         tor = d.get("tor") or {}
         s.tor_host = str(tor.get("host", s.tor_host))
         try:
@@ -184,6 +211,11 @@ def config_path() -> Path:
 def load(path: Path | None = None) -> Settings:
     path = path or config_path()
     try:
+        # Files written by older versions came out 0644 (audit CR2).
+        path.chmod(0o600)
+    except OSError:
+        pass
+    try:
         with path.open("rb") as f:
             return Settings.from_dict(tomllib.load(f))
     except FileNotFoundError:
@@ -197,8 +229,13 @@ def load(path: Path | None = None) -> Settings:
 def save(settings: Settings, path: Path | None = None) -> None:
     settings.validate()
     path = path or config_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
+    # Owner-only (audit CR2): the settings name the proxy and the coins
+    # watched.
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    path.parent.chmod(0o700)
     tmp = path.with_suffix(".toml.tmp")
-    tmp.write_text("# Maze Crypto settings — edited by the app, safe to edit by hand.\n"
-                   + dumps_toml(settings.to_dict()), encoding="utf-8")
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write("# Maze Crypto settings — edited by the app, safe to edit by hand.\n"
+                + dumps_toml(settings.to_dict()))
     tmp.replace(path)

@@ -110,7 +110,11 @@ def yearly_report(trades: list[Trade], year: int, fiat: str) -> tuple[list[Dispo
     for t in sorted(trades, key=lambda t: (t.ts, t.id or 0)):
         if t.fiat != fiat:
             continue
-        y = datetime.fromtimestamp(t.ts, UTC).year
+        # The tax year is the local calendar year — the one the app shows the
+        # trade in, and the one offered in the year picker. UTC put a trade
+        # made just after local midnight on 1 January into the previous year's
+        # report (audit CR4).
+        y = datetime.fromtimestamp(t.ts).year
         amount, cost = pos.get(t.coin_id, (0.0, 0.0))
         if t.side == "buy":
             pos[t.coin_id] = (amount + t.amount, cost + t.total_cost)
@@ -130,7 +134,7 @@ def report_csv(disposals: list[Disposal], fiat: str) -> str:
     w = csv.writer(buf, lineterminator="\n")
     w.writerow(["date", "symbol", "amount", f"proceeds_{fiat}", f"cost_basis_{fiat}", f"gain_{fiat}"])
     for d in disposals:
-        w.writerow([datetime.fromtimestamp(d.ts, UTC).strftime("%Y-%m-%d"), d.symbol, repr(d.amount),
+        w.writerow([datetime.fromtimestamp(d.ts).strftime("%Y-%m-%d"), d.symbol, repr(d.amount),
                     f"{d.proceeds:.2f}", f"{d.cost_basis:.2f}", f"{d.gain:.2f}"])
     w.writerow(["TOTAL", "", "", f"{sum(d.proceeds for d in disposals):.2f}",
                 f"{sum(d.cost_basis for d in disposals):.2f}", f"{sum(d.gain for d in disposals):.2f}"])

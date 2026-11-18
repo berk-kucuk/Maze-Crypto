@@ -440,6 +440,7 @@
   "set.profile": "Profil",
   "set.profile_tip": "Her profilin kendi işlemleri, hedefleri, kuralları ve planı vardır. Yeni bir ad yazarak oluştur.",
   "set.proxy_fail": "Proxy başarısız: {err}",
+  "set.proxy_auto": "Proxy ayarlı değilse, bu bilgisayarda çalışan Tor'u otomatik kullan",
   "set.proxy_help": "DNS sorgularının da proxy'den geçmesi için socks5h:// kullan. Tor varsayılanı socks5h://127.0.0.1:9050.",
   "set.proxy_ok": "Proxy çalışıyor.",
   "set.proxy_on": "Tüm istekleri proxy üzerinden yönlendir (Tor / SOCKS5)",

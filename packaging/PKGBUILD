@@ -2,7 +2,7 @@
 
 pkgname=maze-crypto
 pkgver=0.6.0
-pkgrel=1
+pkgrel=2
 pkgdesc="Read-only crypto market, portfolio and DCA tracker for Maze Linux, with Ledger and Monero view-only wallets"
 arch=('any')
 url="https://mazelinux.berkkucukk.com.tr"

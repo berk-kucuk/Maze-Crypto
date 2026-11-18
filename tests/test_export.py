@@ -66,3 +66,26 @@ def test_number_parsing_and_formatting():
     i18n.set_language("en")
     assert fmt.pct(2) == "+2.00%" and fmt.money(-3.5, "USD") == "\u2212$3.500"
     assert fmt.num(0.000123456) == "0.0001235"
+
+
+def test_tax_year_is_the_local_calendar_year(monkeypatch):
+    """CR4: 00:30 on 1 January in Istanbul is 21:30 on 31 December in UTC.
+    The year picker lists it under the new year; the report must agree."""
+    import time
+    from datetime import datetime
+    from mazecrypto.core.models import Trade
+    monkeypatch.setenv("TZ", "Europe/Istanbul")
+    time.tzset()
+    try:
+        ts = int(datetime(2027, 1, 1, 0, 30).timestamp())
+        trades = [Trade(ts=ts - 86400 * 30, coin_id="bitcoin", symbol="BTC", side="buy",
+                        amount=1, cost=100, fiat="TRY"),
+                  Trade(ts=ts, coin_id="bitcoin", symbol="BTC", side="sell",
+                        amount=1, cost=150, fiat="TRY")]
+        disposals, _ = export.yearly_report(trades, 2027, "TRY")
+        assert len(disposals) == 1
+        assert export.yearly_report(trades, 2026, "TRY")[0] == []
+        assert "2027-01-01" in export.report_csv(disposals, "TRY")
+    finally:
+        monkeypatch.delenv("TZ")
+        time.tzset()

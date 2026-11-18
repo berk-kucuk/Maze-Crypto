@@ -148,8 +148,11 @@ class Onboarding(QDialog):
         self.proxy_on = QCheckBox(t("set.proxy_on"))
         self.proxy_on.setChecked(self.s.proxy.enabled)
         self.proxy_url = QLineEdit(self.s.proxy.url)
+        self.proxy_auto = QCheckBox(t("set.proxy_auto"))
+        self.proxy_auto.setChecked(self.s.proxy.auto_tor)
         lay.addWidget(self.proxy_on)
         lay.addWidget(self.proxy_url)
+        lay.addWidget(self.proxy_auto)
         lay.addWidget(label(t("set.proxy_help"), "Small", wrap=True))
         lay.addStretch()
         return w
@@ -218,7 +221,8 @@ class Onboarding(QDialog):
         self.s.fiat = self.fiat.currentText()
         self.s.secondary_fiat = self.fiat2.currentData() or ""
         self.s.exchanges = checked_exchanges(self.ex)
-        self.s.proxy = cfg.ProxySettings(self.proxy_on.isChecked(), self.proxy_url.text().strip())
+        self.s.proxy = cfg.ProxySettings(self.proxy_on.isChecked(), self.proxy_url.text().strip(),
+                                         self.proxy_auto.isChecked())
         self.s.watchlist = [self.coins.item(i).data(Qt.ItemDataRole.UserRole) for i in range(self.coins.count())
                             if self.coins.item(i).checkState() == Qt.CheckState.Checked]
         self.targets_choice = self.targets.currentData() or ""

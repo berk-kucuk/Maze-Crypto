@@ -440,6 +440,7 @@
   "set.profile": "Profile",
   "set.profile_tip": "Each profile has its own trades, targets, rules and plan. Type a new name to create one.",
   "set.proxy_fail": "Proxy failed: {err}",
+  "set.proxy_auto": "Without a proxy set, use Tor automatically when it is running on this computer",
   "set.proxy_help": "Use socks5h:// so DNS lookups go through the proxy as well. Tor's default is socks5h://127.0.0.1:9050.",
   "set.proxy_ok": "Proxy works.",
   "set.proxy_on": "Route every request through a proxy (Tor / SOCKS5)",

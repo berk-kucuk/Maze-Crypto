@@ -226,7 +226,7 @@ class MainWindow(QMainWindow):
         }
         for p in self.pages.values():
             self.stack.addWidget(p)
-        self._proxy.setVisible(self.ctl.settings.proxy.enabled)
+        self._proxy.setVisible(self._via_proxy())
 
     def _nav_shortcuts(self) -> None:
         for sc in self._shortcuts:
@@ -278,9 +278,14 @@ class MainWindow(QMainWindow):
         self._pill.setProperty("state", state)
         repolish(self._pill)
 
+    def _via_proxy(self) -> bool:
+        """Whether requests really go through a proxy (also a Tor found on its own)."""
+        service = getattr(self.ctl, "service", None)
+        return bool(getattr(getattr(service, "http", None), "proxy", None))
+
     def _settings_changed(self) -> None:
         state = (i18n.language(), self.ctl.expert, self.ctl.settings.accent)
-        self._proxy.setVisible(self.ctl.settings.proxy.enabled)
+        self._proxy.setVisible(self._via_proxy())
         if state == self._state:
             return
         if state[2] != self._state[2]:

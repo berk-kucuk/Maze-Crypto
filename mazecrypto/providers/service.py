@@ -91,7 +91,7 @@ class MarketService:
     def __init__(self, settings: Settings, cache: Cache, http: Http | None = None):
         self.settings = settings
         self.cache = cache
-        self.http = http or Http(allowed_hosts(), settings.proxy.url if settings.proxy.enabled else None)
+        self.http = http or Http(allowed_hosts(), settings.effective_proxy())
         self.exchanges: list[ExchangeProvider] = [EXCHANGES[i]() for i in settings.exchanges if i in EXCHANGES]
         mine = {e.id for e in self.exchanges}
         self.chart_sources = [e for e in self.exchanges if e.has_klines] + [
